@@ -1,0 +1,30 @@
+# Default configuration for lightroom-subject-crop
+
+detection:
+  model_type: yolo  # yolo or face
+  yolo_model: yolov8m.pt  # yolov8n.pt, yolov8s.pt, yolov8m.pt, yolov8l.pt
+  confidence_threshold: 0.5
+  person_class_id: 0  # COCO class ID for person
+
+crop:
+  default_aspect_ratio: [4, 5]  # width:height for vertical crop
+  padding: 0.15  # 15% padding around subject
+  subject_selection: highest_confidence  # largest, centered, highest_confidence
+
+output:
+  backup_existing_xmp: true
+  preview_quality: 85
+  preview_max_size: 1920
+
+supported_extensions:
+  - .jpg
+  - .jpeg
+  - .png
+  - .tif
+  - .tiff
+  - .dng
+  - .cr2
+  - .cr3
+  - .nef
+  - .arw
+  - .raf
