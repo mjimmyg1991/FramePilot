@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entry point for Lightroom Subject Crop GUI application."""
+"""Entry point for FramePilot GUI application."""
 
 import sys
 from pathlib import Path

@@ -16,6 +16,7 @@ class Detection:
     bbox: tuple[float, float, float, float]  # x1, y1, x2, y2 normalized (0-1)
     confidence: float
     label: str  # "person" or "face"
+    sharpness: float = 0.0  # Laplacian variance - higher = sharper/more in focus
 
     @property
     def width(self) -> float:
@@ -39,6 +40,49 @@ class Detection:
             (self.bbox[0] + self.bbox[2]) / 2,
             (self.bbox[1] + self.bbox[3]) / 2
         )
+
+
+def calculate_sharpness(image: np.ndarray, bbox: tuple[float, float, float, float]) -> float:
+    """Calculate sharpness of a region using Laplacian variance.
+
+    Higher values indicate sharper/more in-focus regions.
+
+    Args:
+        image: Full image (BGR)
+        bbox: Bounding box (x1, y1, x2, y2) normalized 0-1
+
+    Returns:
+        Sharpness score (Laplacian variance)
+    """
+    h, w = image.shape[:2]
+    x1 = int(bbox[0] * w)
+    y1 = int(bbox[1] * h)
+    x2 = int(bbox[2] * w)
+    y2 = int(bbox[3] * h)
+
+    # Ensure valid crop region
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(w, x2)
+    y2 = min(h, y2)
+
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+
+    # Extract region
+    region = image[y1:y2, x1:x2]
+
+    # Convert to grayscale
+    if len(region.shape) == 3:
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = region
+
+    # Calculate Laplacian variance (higher = sharper)
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    variance = laplacian.var()
+
+    return float(variance)
 
 
 class SubjectDetector:
@@ -108,6 +152,10 @@ class SubjectDetector:
         # If no person detected, try face detection as fallback
         if not detections:
             detections = self._detect_faces(image, width, height)
+
+        # Calculate sharpness for each detection
+        for det in detections:
+            det.sharpness = calculate_sharpness(image, det.bbox)
 
         # Sort by confidence (highest first)
         detections.sort(key=lambda d: d.confidence, reverse=True)

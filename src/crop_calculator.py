@@ -56,12 +56,15 @@ def select_primary_subject(
 ) -> Detection | None:
     """Select the primary subject from a list of detections.
 
+    All strategies now factor in sharpness to avoid selecting out-of-focus subjects.
+    A detection that is significantly blurrier than others will be penalized.
+
     Args:
         detections: List of Detection objects
         strategy: Selection strategy
-            - "largest": Select the detection with largest bounding box area
-            - "centered": Select the detection closest to image center
-            - "highest_confidence": Select the detection with highest confidence
+            - "largest": Select the detection with largest bounding box area (sharpness-weighted)
+            - "centered": Select the detection closest to image center (sharpness-weighted)
+            - "highest_confidence": Select best detection by confidence × sharpness
 
     Returns:
         Selected Detection or None if no detections
@@ -72,16 +75,38 @@ def select_primary_subject(
     if len(detections) == 1:
         return detections[0]
 
+    # Calculate sharpness normalization factor
+    # We normalize sharpness so the sharpest detection has score 1.0
+    max_sharpness = max(d.sharpness for d in detections) if detections else 0.0
+
+    def sharpness_factor(det: Detection) -> float:
+        """Returns 0.0-1.0 based on relative sharpness. Below 30% of max is penalized heavily."""
+        # If no sharpness data available (all zeros), return 1.0 to not affect selection
+        if max_sharpness == 0:
+            return 1.0
+        relative = det.sharpness / max_sharpness
+        if relative < 0.3:
+            # Heavily penalize very blurry detections
+            return relative * 0.5
+        return relative
+
     if strategy == "largest":
-        return max(detections, key=lambda d: d.area)
+        # Combine area with sharpness: area * sqrt(sharpness_factor)
+        # sqrt dampens sharpness effect so size still matters, but blur is penalized
+        return max(detections, key=lambda d: d.area * (sharpness_factor(d) ** 0.5))
     elif strategy == "centered":
-        # Find detection closest to center (0.5, 0.5)
-        def distance_to_center(det: Detection) -> float:
+        # Find detection closest to center, but penalize blurry detections
+        def score_centered(det: Detection) -> float:
             cx, cy = det.center
-            return ((cx - 0.5) ** 2 + (cy - 0.5) ** 2) ** 0.5
-        return min(detections, key=distance_to_center)
+            distance = ((cx - 0.5) ** 2 + (cy - 0.5) ** 2) ** 0.5
+            # Lower distance = better, higher sharpness = better
+            # Return negative distance multiplied by sharpness factor
+            return -distance * (2.0 - sharpness_factor(det))
+        return max(detections, key=score_centered)
     elif strategy == "highest_confidence":
-        return max(detections, key=lambda d: d.confidence)
+        # Combine confidence with sharpness
+        # confidence * sharpness_factor gives strong preference to sharp + confident
+        return max(detections, key=lambda d: d.confidence * sharpness_factor(d))
     else:
         raise ValueError(f"Unknown selection strategy: {strategy}")
 

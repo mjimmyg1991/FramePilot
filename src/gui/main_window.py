@@ -1,4 +1,4 @@
-"""Main application window for Lightroom Subject Crop GUI - CustomTkinter."""
+"""Main application window for FramePilot GUI - CustomTkinter."""
 
 import os
 import subprocess
@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox
 from typing import Any
 
 import customtkinter as ctk
+from PIL import Image, ImageTk
 
 from .preview_widget import PreviewWidget
 from .worker import ProcessingResult, ProcessingWorker, write_xmp_for_results, export_cropped_images
@@ -24,6 +25,23 @@ from ..presets import (
 # Configure CustomTkinter
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+# FramePilot Brand Colors
+BRAND_COLORS = {
+    "orange": "#FF6B35",
+    "orange_dim": "#E55A2B",
+    "orange_glow": "rgba(255, 107, 53, 0.15)",
+    "bg_primary": "#0A0A0B",
+    "bg_secondary": "#111113",
+    "bg_tertiary": "#1A1A1D",
+    "bg_card": "#151517",
+    "border": "#2A2A2E",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#A0A0A5",
+    "text_dim": "#6B6B70",
+    "success": "#22C55E",
+    "error": "#EF4444",
+}
 
 # Supported image extensions
 SUPPORTED_EXTENSIONS = {
@@ -40,11 +58,12 @@ class ExportDialog(ctk.CTkToplevel):
         self.result = None
         self._max_dimension = max_dimension
 
-        self.title("Export Cropped Images")
+        self.title("FramePilot - Export")
         self.geometry("520x280")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
+        self.configure(fg_color=BRAND_COLORS["bg_secondary"])
 
         # Center on parent
         self.update_idletasks()
@@ -58,7 +77,8 @@ class ExportDialog(ctk.CTkToplevel):
         # Header
         ctk.CTkLabel(
             self, text=f"Export {file_count} cropped image(s)",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=BRAND_COLORS["text_primary"]
         ).grid(row=0, column=0, padx=24, pady=(24, 16), sticky="w")
 
         # Output folder frame
@@ -93,9 +113,14 @@ class ExportDialog(ctk.CTkToplevel):
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.grid(row=4, column=0, padx=24, pady=(24, 24), sticky="e")
 
-        ctk.CTkButton(btn_frame, text="Cancel", width=100, fg_color="gray30", hover_color="gray40",
+        ctk.CTkButton(btn_frame, text="Cancel", width=100,
+                      fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+                      border_width=1, border_color=BRAND_COLORS["border"],
                       command=self.destroy).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(btn_frame, text="Export", width=100, command=self._on_export).pack(side="left")
+        ctk.CTkButton(btn_frame, text="Export", width=100,
+                      fg_color=BRAND_COLORS["orange"], hover_color=BRAND_COLORS["orange_dim"],
+                      text_color=BRAND_COLORS["bg_primary"],
+                      command=self._on_export).pack(side="left")
 
     def _browse_folder(self):
         folder = filedialog.askdirectory()
@@ -126,9 +151,13 @@ class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Lightroom Subject Crop")
+        self.title("FramePilot")
         self.geometry("1320x850")
         self.minsize(1100, 700)
+        self.configure(fg_color=BRAND_COLORS["bg_primary"])
+
+        # Set app icon
+        self._set_app_icon()
 
         # State
         self._queue: list[dict[str, Any]] = []
@@ -156,6 +185,19 @@ class MainWindow(ctk.CTk):
         self._setup_ui()
         self._setup_drag_drop()
 
+    def _set_app_icon(self):
+        """Set the application window icon."""
+        icon_path = Path(__file__).parent.parent.parent / "branding" / "FramePilot Icon Mark.png"
+        if icon_path.exists():
+            try:
+                icon_img = Image.open(icon_path)
+                # Resize for icon (Windows typically wants 32x32 or 48x48)
+                icon_img = icon_img.resize((48, 48), Image.Resampling.LANCZOS)
+                self._icon_photo = ImageTk.PhotoImage(icon_img)
+                self.iconphoto(True, self._icon_photo)
+            except Exception:
+                pass  # Silently fail if icon can't be loaded
+
     def _setup_ui(self):
         """Set up the main UI."""
         # Configure grid
@@ -170,23 +212,46 @@ class MainWindow(ctk.CTk):
 
     def _setup_sidebar(self):
         """Set up the left sidebar with scrollable content."""
-        sidebar = ctk.CTkFrame(self, width=380, corner_radius=0)
+        sidebar = ctk.CTkFrame(self, width=380, corner_radius=0, fg_color=BRAND_COLORS["bg_secondary"])
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_rowconfigure(1, weight=1)  # Scrollable area expands
         sidebar.grid_columnconfigure(0, weight=1)
         sidebar.grid_propagate(False)
 
-        # App title (fixed at top)
+        # App header with logo (fixed at top)
         title_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
         title_frame.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="ew")
 
+        # Load and display logo
+        self._logo_image = None
+        logo_path = Path(__file__).parent.parent.parent / "branding" / "FramePilot Wordmark.png"
+        if logo_path.exists():
+            try:
+                logo_img = Image.open(logo_path)
+                # Scale to fit header (max height ~36px)
+                aspect = logo_img.width / logo_img.height
+                new_height = 36
+                new_width = int(new_height * aspect)
+                logo_img = logo_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                self._logo_image = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(new_width, new_height))
+                ctk.CTkLabel(title_frame, image=self._logo_image, text="").pack(anchor="w")
+            except Exception:
+                # Fallback to text if logo fails
+                ctk.CTkLabel(
+                    title_frame, text="FramePilot",
+                    font=ctk.CTkFont(family="DM Sans", size=22, weight="bold"),
+                    text_color=BRAND_COLORS["orange"]
+                ).pack(anchor="w")
+        else:
+            ctk.CTkLabel(
+                title_frame, text="FramePilot",
+                font=ctk.CTkFont(family="DM Sans", size=22, weight="bold"),
+                text_color=BRAND_COLORS["orange"]
+            ).pack(anchor="w")
+
         ctk.CTkLabel(
-            title_frame, text="Lightroom Subject Crop",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            title_frame, text="Auto-crop for vertical formats",
-            font=ctk.CTkFont(size=11), text_color="gray"
+            title_frame, text="Smart crops. Zero effort.",
+            font=ctk.CTkFont(size=11), text_color=BRAND_COLORS["text_dim"]
         ).pack(anchor="w")
 
         # Scrollable content area
@@ -195,7 +260,7 @@ class MainWindow(ctk.CTk):
         scroll_container.grid_columnconfigure(0, weight=1)
 
         # --- Smart Settings Section ---
-        smart_frame = ctk.CTkFrame(scroll_container)
+        smart_frame = ctk.CTkFrame(scroll_container, fg_color=BRAND_COLORS["bg_card"], border_width=1, border_color=BRAND_COLORS["border"])
         smart_frame.pack(fill="x", padx=12, pady=(0, 8))
 
         ctk.CTkLabel(smart_frame, text="Smart Settings", font=ctk.CTkFont(weight="bold")).pack(
@@ -245,7 +310,9 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(quality_row, text="Quality:", width=60, anchor="w").pack(side="left")
         self._quality_slider = ctk.CTkSlider(
             quality_row, from_=60, to=100, number_of_steps=40,
-            command=self._on_quality_change, width=140
+            command=self._on_quality_change, width=140,
+            progress_color=BRAND_COLORS["orange"], button_color=BRAND_COLORS["orange"],
+            button_hover_color=BRAND_COLORS["orange_dim"]
         )
         self._quality_slider.set(92)
         self._quality_slider.pack(side="left", padx=4)
@@ -261,7 +328,7 @@ class MainWindow(ctk.CTk):
         self._update_dropdown_descriptions()
 
         # --- Aspect Ratio Section ---
-        ar_frame = ctk.CTkFrame(scroll_container)
+        ar_frame = ctk.CTkFrame(scroll_container, fg_color=BRAND_COLORS["bg_card"], border_width=1, border_color=BRAND_COLORS["border"])
         ar_frame.pack(fill="x", padx=12, pady=8)
 
         ctk.CTkLabel(ar_frame, text="Aspect Ratio", font=ctk.CTkFont(weight="bold")).pack(
@@ -275,8 +342,9 @@ class MainWindow(ctk.CTk):
         for label, w, h in presets:
             btn = ctk.CTkButton(
                 presets_frame, text=label, width=65, height=28,
-                fg_color=("#0078d4" if label == "4:5" else "gray25"),
-                hover_color=("#1084d8" if label == "4:5" else "gray35"),
+                fg_color=(BRAND_COLORS["orange"] if label == "4:5" else BRAND_COLORS["bg_tertiary"]),
+                hover_color=(BRAND_COLORS["orange_dim"] if label == "4:5" else BRAND_COLORS["border"]),
+                text_color=(BRAND_COLORS["bg_primary"] if label == "4:5" else BRAND_COLORS["text_primary"]),
                 command=lambda l=label, w=w, h=h: self._set_preset(l, w, h),
             )
             btn.pack(side="left", padx=2)
@@ -294,7 +362,9 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(custom_pad_frame, text="  Pad:").pack(side="left", padx=(8, 0))
         self._padding_slider = ctk.CTkSlider(
             custom_pad_frame, from_=0, to=30, number_of_steps=30,
-            command=self._on_padding_change, width=80
+            command=self._on_padding_change, width=80,
+            progress_color=BRAND_COLORS["orange"], button_color=BRAND_COLORS["orange"],
+            button_hover_color=BRAND_COLORS["orange_dim"]
         )
         self._padding_slider.set(15)
         self._padding_slider.pack(side="left", padx=4)
@@ -302,7 +372,7 @@ class MainWindow(ctk.CTk):
         self._padding_label.pack(side="left")
 
         # --- Subject Selection ---
-        strat_frame = ctk.CTkFrame(scroll_container)
+        strat_frame = ctk.CTkFrame(scroll_container, fg_color=BRAND_COLORS["bg_card"], border_width=1, border_color=BRAND_COLORS["border"])
         strat_frame.pack(fill="x", padx=12, pady=8)
 
         strat_row = ctk.CTkFrame(strat_frame, fg_color="transparent")
@@ -323,7 +393,7 @@ class MainWindow(ctk.CTk):
         self._strategy_desc_label.pack(fill="x", padx=12, pady=(0, 10))
 
         # --- File Queue ---
-        queue_frame = ctk.CTkFrame(scroll_container)
+        queue_frame = ctk.CTkFrame(scroll_container, fg_color=BRAND_COLORS["bg_card"], border_width=1, border_color=BRAND_COLORS["border"])
         queue_frame.pack(fill="x", padx=12, pady=8)
 
         # Queue header with buttons
@@ -334,20 +404,25 @@ class MainWindow(ctk.CTk):
 
         btn_row = ctk.CTkFrame(queue_header, fg_color="transparent")
         btn_row.pack(side="right")
-        ctk.CTkButton(btn_row, text="+Files", width=55, height=24, command=self._add_files).pack(side="left", padx=1)
-        ctk.CTkButton(btn_row, text="+Folder", width=60, height=24, command=self._add_folder).pack(side="left", padx=1)
-        ctk.CTkButton(btn_row, text="Clear", width=50, height=24, fg_color="gray30",
-                      hover_color="gray40", command=self._clear_queue).pack(side="left", padx=1)
+        ctk.CTkButton(btn_row, text="+Files", width=55, height=24,
+                      fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+                      command=self._add_files).pack(side="left", padx=1)
+        ctk.CTkButton(btn_row, text="+Folder", width=60, height=24,
+                      fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+                      command=self._add_folder).pack(side="left", padx=1)
+        ctk.CTkButton(btn_row, text="Clear", width=50, height=24,
+                      fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+                      command=self._clear_queue).pack(side="left", padx=1)
 
         # Import from catalog button
         ctk.CTkButton(
-            queue_frame, text="📂 Import from Catalog...",
-            height=28, fg_color="gray25", hover_color="gray35",
+            queue_frame, text="Import from Catalog...",
+            height=28, fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
             command=self._open_catalog_browser
         ).pack(fill="x", padx=12, pady=(0, 6))
 
         # Queue list (fixed height, internal scroll)
-        self._queue_scroll = ctk.CTkScrollableFrame(queue_frame, fg_color="gray17", height=120)
+        self._queue_scroll = ctk.CTkScrollableFrame(queue_frame, fg_color=BRAND_COLORS["bg_primary"], height=120)
         self._queue_scroll.pack(fill="x", padx=12, pady=(0, 10))
         self._queue_scroll.grid_columnconfigure(0, weight=1)
 
@@ -358,12 +433,15 @@ class MainWindow(ctk.CTk):
         self._drop_hint.grid(row=0, column=0, pady=20)
 
         # --- Actions (fixed at bottom) ---
-        action_frame = ctk.CTkFrame(sidebar)
+        action_frame = ctk.CTkFrame(sidebar, fg_color=BRAND_COLORS["bg_secondary"])
         action_frame.grid(row=2, column=0, padx=12, pady=(4, 8), sticky="ew")
 
         self._process_btn = ctk.CTkButton(
-            action_frame, text="▶  Process All", height=38,
+            action_frame, text="Process All", height=38,
             font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=BRAND_COLORS["orange"],
+            hover_color=BRAND_COLORS["orange_dim"],
+            text_color=BRAND_COLORS["bg_primary"],
             command=self._start_processing
         )
         self._process_btn.pack(fill="x", padx=8, pady=(8, 4))
@@ -373,14 +451,16 @@ class MainWindow(ctk.CTk):
 
         self._write_xmp_btn = ctk.CTkButton(
             btn_row2, text="Write XMP", height=32,
-            fg_color="gray30", hover_color="gray40",
+            fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+            border_width=1, border_color=BRAND_COLORS["border"],
             command=self._write_xmp, state="disabled"
         )
         self._write_xmp_btn.pack(side="left", expand=True, fill="x", padx=(0, 2))
 
         self._export_btn = ctk.CTkButton(
             btn_row2, text="Export JPEGs", height=32,
-            fg_color="gray30", hover_color="gray40",
+            fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+            border_width=1, border_color=BRAND_COLORS["border"],
             command=self._export_images, state="disabled"
         )
         self._export_btn.pack(side="left", expand=True, fill="x", padx=(2, 0))
@@ -389,17 +469,19 @@ class MainWindow(ctk.CTk):
         progress_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
         progress_frame.grid(row=3, column=0, padx=16, pady=(0, 12), sticky="ew")
 
-        self._progress_bar = ctk.CTkProgressBar(progress_frame, height=8)
+        self._progress_bar = ctk.CTkProgressBar(progress_frame, height=8,
+                                                 progress_color=BRAND_COLORS["orange"],
+                                                 fg_color=BRAND_COLORS["bg_tertiary"])
         self._progress_bar.pack(fill="x", pady=(0, 4))
         self._progress_bar.set(0)
 
         self._status_var = ctk.StringVar(value="Ready")
         ctk.CTkLabel(progress_frame, textvariable=self._status_var,
-                     text_color="gray", font=ctk.CTkFont(size=11)).pack(fill="x")
+                     text_color=BRAND_COLORS["text_dim"], font=ctk.CTkFont(size=11)).pack(fill="x")
 
     def _setup_main_content(self):
         """Set up the main preview area."""
-        main_frame = ctk.CTkFrame(self, fg_color="gray10", corner_radius=0)
+        main_frame = ctk.CTkFrame(self, fg_color=BRAND_COLORS["bg_primary"], corner_radius=0)
         main_frame.grid(row=0, column=1, sticky="nsew")
         main_frame.grid_columnconfigure(0, weight=1)
         main_frame.grid_rowconfigure(1, weight=1)
@@ -408,28 +490,32 @@ class MainWindow(ctk.CTk):
         header = ctk.CTkFrame(main_frame, fg_color="transparent")
         header.grid(row=0, column=0, padx=20, pady=(16, 8), sticky="ew")
 
-        ctk.CTkLabel(header, text="Preview", font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        ctk.CTkLabel(header, text="Preview", font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=BRAND_COLORS["text_primary"]).pack(side="left")
 
         # Per-image controls
         controls = ctk.CTkFrame(header, fg_color="transparent")
         controls.pack(side="right")
 
         self._flip_ar_btn = ctk.CTkButton(
-            controls, text="↔  Flip to Landscape", width=160,
-            fg_color="gray25", hover_color="gray35",
+            controls, text="Flip to Landscape", width=140,
+            fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+            border_width=1, border_color=BRAND_COLORS["border"],
             command=self._flip_aspect_ratio, state="disabled"
         )
         self._flip_ar_btn.pack(side="left", padx=4)
 
         self._recenter_btn = ctk.CTkButton(
-            controls, text="⌖  Re-center", width=120,
-            fg_color="gray25", hover_color="gray35",
+            controls, text="Re-center", width=100,
+            fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+            border_width=1, border_color=BRAND_COLORS["border"],
             command=self._recenter_crop, state="disabled"
         )
         self._recenter_btn.pack(side="left", padx=4)
 
         # Preview widget (using tk Canvas inside CTk)
-        preview_container = ctk.CTkFrame(main_frame, fg_color="gray14")
+        preview_container = ctk.CTkFrame(main_frame, fg_color=BRAND_COLORS["bg_secondary"],
+                                          border_width=1, border_color=BRAND_COLORS["border"])
         preview_container.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
 
         self._preview = PreviewWidget(preview_container, on_crop_changed=self._on_crop_dragged)
@@ -501,9 +587,9 @@ class MainWindow(ctk.CTk):
     def _on_strategy_change(self, value: str):
         """Handle subject selection strategy change."""
         strategy_descriptions = {
-            "Smart Select": "AI picks the best subject automatically",
-            "Main Subject": "Always focuses on the largest person in frame",
-            "Center Stage": "Prioritizes whoever is closest to the center",
+            "Smart Select": "AI picks the sharpest, most confident subject",
+            "Main Subject": "Focuses on the largest in-focus person",
+            "Center Stage": "Prioritizes centered, in-focus subjects",
         }
         self._strategy_desc_label.configure(text=strategy_descriptions.get(value, ""))
 
@@ -637,9 +723,11 @@ class MainWindow(ctk.CTk):
         # Update button colors
         for btn_label, btn in self._preset_buttons.items():
             if btn_label == label:
-                btn.configure(fg_color="#0078d4", hover_color="#1084d8")
+                btn.configure(fg_color=BRAND_COLORS["orange"], hover_color=BRAND_COLORS["orange_dim"],
+                              text_color=BRAND_COLORS["bg_primary"])
             else:
-                btn.configure(fg_color="gray25", hover_color="gray35")
+                btn.configure(fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+                              text_color=BRAND_COLORS["text_primary"])
 
         # Update preview
         self._preview.set_aspect_ratio((w, h), is_landscape=False)
@@ -674,9 +762,9 @@ class MainWindow(ctk.CTk):
         self._preview.update_crop(new_crop, result.primary_detection)
 
         if is_landscape:
-            self._flip_ar_btn.configure(text="↕  Flip to Portrait")
+            self._flip_ar_btn.configure(text="Flip to Portrait")
         else:
-            self._flip_ar_btn.configure(text="↔  Flip to Landscape")
+            self._flip_ar_btn.configure(text="Flip to Landscape")
 
     def _recenter_crop(self):
         """Re-center crop on detected subject."""
@@ -786,11 +874,11 @@ class MainWindow(ctk.CTk):
             return
 
         status_icons = {
-            "pending": ("○", "gray"),
-            "processing": ("◐", "#0078d4"),
-            "success": ("●", "#4ec9b0"),
-            "no_subject": ("◌", "#dcdcaa"),
-            "error": ("✕", "#f14c4c"),
+            "pending": ("○", BRAND_COLORS["text_dim"]),
+            "processing": ("◐", BRAND_COLORS["orange"]),
+            "success": ("●", BRAND_COLORS["success"]),
+            "no_subject": ("◌", BRAND_COLORS["text_secondary"]),
+            "error": ("✕", BRAND_COLORS["error"]),
         }
 
         for i, item in enumerate(self._queue):
@@ -816,7 +904,7 @@ class MainWindow(ctk.CTk):
 
             # Highlight selected
             if i == self._selected_index:
-                row_frame.configure(fg_color="gray25")
+                row_frame.configure(fg_color=BRAND_COLORS["bg_tertiary"])
 
     def _select_queue_item(self, index: int):
         """Select a queue item."""
@@ -843,9 +931,9 @@ class MainWindow(ctk.CTk):
         self._recenter_btn.configure(state="normal" if has_result else "disabled")
 
         if is_landscape:
-            self._flip_ar_btn.configure(text="↕  Flip to Portrait")
+            self._flip_ar_btn.configure(text="Flip to Portrait")
         else:
-            self._flip_ar_btn.configure(text="↔  Flip to Landscape")
+            self._flip_ar_btn.configure(text="Flip to Landscape")
 
     def _start_processing(self):
         if not self._queue:
@@ -854,7 +942,7 @@ class MainWindow(ctk.CTk):
 
         if self._worker.is_running:
             self._worker.cancel()
-            self._process_btn.configure(text="▶  Process All")
+            self._process_btn.configure(text="Process All")
             self._status_var.set("Cancelled")
             return
 
@@ -878,7 +966,7 @@ class MainWindow(ctk.CTk):
         files = [item["path"] for item in self._queue]
         self._worker.start_processing(files, aspect_ratio, padding, strategy_technical)
 
-        self._process_btn.configure(text="⏹  Cancel")
+        self._process_btn.configure(text="Cancel")
         self._write_xmp_btn.configure(state="disabled")
         self._export_btn.configure(state="disabled")
 
@@ -909,7 +997,7 @@ class MainWindow(ctk.CTk):
         self.after(0, self._processing_complete, results)
 
     def _processing_complete(self, results: list[ProcessingResult]):
-        self._process_btn.configure(text="▶  Process All")
+        self._process_btn.configure(text="Process All")
 
         success = sum(1 for r in results if r.status == "success")
         no_subject = sum(1 for r in results if r.status == "no_subject")

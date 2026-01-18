@@ -1,7 +1,7 @@
-# Project Status - Lightroom Subject Crop
+# Project Status - FramePilot
 
-**Last Updated:** January 2025
-**Status:** Feature complete, pending branding/packaging
+**Last Updated:** January 2026
+**Status:** Feature complete, branding applied, ready for packaging
 
 ---
 
@@ -137,10 +137,11 @@ pytest tests/ -v
 ## Pending / Future Work
 
 ### Before Packaging
-- [ ] Finalize app name and branding
-- [ ] App icon design
+- [x] Finalize app name and branding (FramePilot)
+- [x] App icon design (in branding/ folder)
 - [ ] About dialog with version info
 - [ ] License decision
+- [ ] Set app icon for window/taskbar
 
 ### Packaging Options
 - PyInstaller for Windows/Mac executables

@@ -1,6 +1,8 @@
-# Lightroom Subject Crop - AI Agent Context
+# FramePilot - AI Agent Context
 
 > Python desktop application for auto-cropping landscape photos to vertical formats using AI subject detection. Generates XMP sidecars for Lightroom Classic or exports cropped JPEGs directly.
+>
+> **Brand:** "Smart crops. Zero effort." - See `BRAND.md` and `branding/` folder for brand guidelines and assets.
 
 ---
 

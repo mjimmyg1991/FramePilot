@@ -11,6 +11,20 @@ from ..catalog.lightroom import LightroomCatalog, find_lightroom_catalogs, Catal
 from ..catalog.darktable import DarktableCatalog, find_darktable_database
 from ..catalog.capture_one import CaptureOneCatalog, find_capture_one_catalogs
 
+# FramePilot Brand Colors
+BRAND_COLORS = {
+    "orange": "#FF6B35",
+    "orange_dim": "#E55A2B",
+    "bg_primary": "#0A0A0B",
+    "bg_secondary": "#111113",
+    "bg_tertiary": "#1A1A1D",
+    "bg_card": "#151517",
+    "border": "#2A2A2E",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#A0A0A5",
+    "text_dim": "#6B6B70",
+}
+
 
 class CatalogBrowserDialog(ctk.CTkToplevel):
     """Dialog for browsing and importing images from photo catalogs."""
@@ -25,11 +39,12 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
         self._catalog_type = None
         self._current_images: list = []
 
-        self.title("Import from Catalog")
+        self.title("FramePilot - Import from Catalog")
         self.geometry("800x600")
         self.minsize(700, 500)
         self.transient(parent)
         self.grab_set()
+        self.configure(fg_color=BRAND_COLORS["bg_secondary"])
 
         # Center on parent
         self.update_idletasks()
@@ -55,7 +70,7 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
         ).pack(side="left")
 
         # Catalog selection
-        select_frame = ctk.CTkFrame(self)
+        select_frame = ctk.CTkFrame(self, fg_color=BRAND_COLORS["bg_card"], border_width=1, border_color=BRAND_COLORS["border"])
         select_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
         select_frame.grid_columnconfigure(1, weight=1)
 
@@ -72,18 +87,19 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             select_frame, text="Browse...", width=100,
+            fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
             command=self._browse_catalog
         ).grid(row=0, column=2, padx=(0, 12), pady=12)
 
         # Main content - split view
-        content = ctk.CTkFrame(self)
+        content = ctk.CTkFrame(self, fg_color="transparent")
         content.grid(row=2, column=0, padx=20, pady=10, sticky="nsew")
         content.grid_columnconfigure(0, weight=1)
         content.grid_columnconfigure(1, weight=2)
         content.grid_rowconfigure(0, weight=1)
 
         # Left panel - folders/collections
-        left_panel = ctk.CTkFrame(content, fg_color="gray17")
+        left_panel = ctk.CTkFrame(content, fg_color=BRAND_COLORS["bg_card"], border_width=1, border_color=BRAND_COLORS["border"])
         left_panel.grid(row=0, column=0, padx=(12, 6), pady=12, sticky="nsew")
         left_panel.grid_rowconfigure(1, weight=1)
         left_panel.grid_columnconfigure(0, weight=1)
@@ -93,12 +109,12 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(weight="bold")
         ).grid(row=0, column=0, padx=12, pady=(12, 8), sticky="w")
 
-        self._source_list = ctk.CTkScrollableFrame(left_panel, fg_color="gray20")
+        self._source_list = ctk.CTkScrollableFrame(left_panel, fg_color=BRAND_COLORS["bg_primary"])
         self._source_list.grid(row=1, column=0, padx=8, pady=(0, 12), sticky="nsew")
         self._source_list.grid_columnconfigure(0, weight=1)
 
         # Right panel - images
-        right_panel = ctk.CTkFrame(content, fg_color="gray17")
+        right_panel = ctk.CTkFrame(content, fg_color=BRAND_COLORS["bg_card"], border_width=1, border_color=BRAND_COLORS["border"])
         right_panel.grid(row=0, column=1, padx=(6, 12), pady=12, sticky="nsew")
         right_panel.grid_rowconfigure(1, weight=1)
         right_panel.grid_columnconfigure(0, weight=1)
@@ -119,7 +135,7 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
         self._image_count_label = ctk.CTkLabel(img_header, text="", text_color="gray")
         self._image_count_label.pack(side="right", padx=12)
 
-        self._image_list = ctk.CTkScrollableFrame(right_panel, fg_color="gray20")
+        self._image_list = ctk.CTkScrollableFrame(right_panel, fg_color=BRAND_COLORS["bg_primary"])
         self._image_list.grid(row=1, column=0, padx=8, pady=(0, 12), sticky="nsew")
         self._image_list.grid_columnconfigure(0, weight=1)
 
@@ -131,6 +147,8 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
 
         self._import_btn = ctk.CTkButton(
             footer, text="Import Selected (0)",
+            fg_color=BRAND_COLORS["orange"], hover_color=BRAND_COLORS["orange_dim"],
+            text_color=BRAND_COLORS["bg_primary"],
             command=self._do_import,
             state="disabled"
         )
@@ -138,14 +156,15 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             footer, text="Cancel",
-            fg_color="gray30", hover_color="gray40",
+            fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+            border_width=1, border_color=BRAND_COLORS["border"],
             command=self.destroy
         ).pack(side="right", padx=8)
 
         # Filter info
         self._status_label = ctk.CTkLabel(
             footer, text="Select a catalog to browse",
-            text_color="gray", font=ctk.CTkFont(size=12)
+            text_color=BRAND_COLORS["text_dim"], font=ctk.CTkFont(size=12)
         )
         self._status_label.pack(side="left")
 
@@ -259,7 +278,7 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
             ]:
                 btn = ctk.CTkButton(
                     self._source_list, text=label, anchor="w",
-                    fg_color="transparent", hover_color="gray30",
+                    fg_color="transparent", hover_color=BRAND_COLORS["bg_tertiary"],
                     command=action
                 )
                 btn.grid(row=row, column=0, padx=4, pady=2, sticky="ew")
@@ -277,7 +296,7 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
                     self._source_list,
                     text=f"📁 {folder.name} ({folder.image_count})",
                     anchor="w",
-                    fg_color="transparent", hover_color="gray30",
+                    fg_color="transparent", hover_color=BRAND_COLORS["bg_tertiary"],
                     command=lambda f=folder: self._load_lightroom_folder(f.id)
                 )
                 btn.grid(row=row, column=0, padx=4, pady=1, sticky="ew")
@@ -297,7 +316,7 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
                         self._source_list,
                         text=f"📚 {coll.name} ({coll.image_count})",
                         anchor="w",
-                        fg_color="transparent", hover_color="gray30",
+                        fg_color="transparent", hover_color=BRAND_COLORS["bg_tertiary"],
                         command=lambda c=coll: self._load_lightroom_collection(c.id)
                     )
                     btn.grid(row=row, column=0, padx=4, pady=1, sticky="ew")
@@ -316,7 +335,7 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
                     self._source_list,
                     text=f"📁 {roll.name} ({roll.image_count})",
                     anchor="w",
-                    fg_color="transparent", hover_color="gray30",
+                    fg_color="transparent", hover_color=BRAND_COLORS["bg_tertiary"],
                     command=lambda r=roll: self._load_darktable_roll(r.id)
                 )
                 btn.grid(row=row, column=0, padx=4, pady=1, sticky="ew")
@@ -334,7 +353,7 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
                 self._source_list,
                 text="📷 Load All Images",
                 anchor="w",
-                fg_color="transparent", hover_color="gray30",
+                fg_color="transparent", hover_color=BRAND_COLORS["bg_tertiary"],
                 command=self._load_capture_one_all
             )
             btn.grid(row=row, column=0, padx=4, pady=2, sticky="ew")
