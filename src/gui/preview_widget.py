@@ -14,13 +14,20 @@ from ..detector import Detection
 class PreviewWidget(ctk.CTkFrame):
     """Widget for displaying image previews with draggable crop overlay."""
 
+    # Brand color for accent
+    BRAND_ORANGE = "#FF6B35"
+
     def __init__(
         self,
         parent,
         on_crop_changed: Callable[[CropRegion], None] | None = None,
+        on_empty_click: Callable[[], None] | None = None,
         **kwargs
     ):
         super().__init__(parent, fg_color="gray14", **kwargs)
+
+        # Callback when user clicks empty preview (to add files)
+        self._on_empty_click = on_empty_click
 
         self._current_image: Image.Image | None = None
         self._current_path: Path | None = None
@@ -75,13 +82,8 @@ class PreviewWidget(ctk.CTkFrame):
         )
         self.canvas.pack(fill="both", expand=True, padx=4, pady=(0, 4))
 
-        # Placeholder text
-        self._placeholder_id = self.canvas.create_text(
-            0, 0,
-            text="Select an image to preview",
-            fill="#666666",
-            font=("Segoe UI", 14),
-        )
+        # Empty state elements (more prominent)
+        self._empty_state_ids = []
 
         # Bind events
         self.canvas.bind("<Configure>", self._on_resize)
@@ -91,17 +93,89 @@ class PreviewWidget(ctk.CTkFrame):
 
     def _on_resize(self, event):
         """Handle canvas resize."""
-        self.canvas.coords(
-            self._placeholder_id,
-            event.width // 2,
-            event.height // 2,
-        )
         if self._current_image is not None:
             self._draw_preview()
+        else:
+            self._draw_empty_state()
+
+    def _draw_empty_state(self):
+        """Draw a prominent empty state with upload call-to-action."""
+        # Clear any existing empty state elements
+        for item_id in self._empty_state_ids:
+            self.canvas.delete(item_id)
+        self._empty_state_ids = []
+
+        # Change cursor to hand pointer when empty (clickable)
+        self.canvas.config(cursor="hand2")
+
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        if canvas_width <= 1 or canvas_height <= 1:
+            return
+
+        center_x = canvas_width // 2
+        center_y = canvas_height // 2
+
+        # Draw dashed border rectangle (drop zone indicator)
+        padding = 40
+        x1, y1 = padding, padding
+        x2, y2 = canvas_width - padding, canvas_height - padding
+
+        # Create dashed border effect with multiple rectangles
+        dash_id = self.canvas.create_rectangle(
+            x1, y1, x2, y2,
+            outline="#3a3a3a",
+            width=2,
+            dash=(10, 6),
+        )
+        self._empty_state_ids.append(dash_id)
+
+        # Upload icon (using unicode symbol)
+        icon_id = self.canvas.create_text(
+            center_x, center_y - 50,
+            text="📁",
+            font=("Segoe UI Emoji", 48),
+            fill="#555555",
+        )
+        self._empty_state_ids.append(icon_id)
+
+        # Main instruction text with brand color
+        main_text_id = self.canvas.create_text(
+            center_x, center_y + 20,
+            text="Drop photos here to get started",
+            font=("Segoe UI", 18, "bold"),
+            fill=self.BRAND_ORANGE,
+        )
+        self._empty_state_ids.append(main_text_id)
+
+        # Secondary instruction - make it clickable hint
+        secondary_text_id = self.canvas.create_text(
+            center_x, center_y + 55,
+            text="Click here or use +Files / +Folder in sidebar",
+            font=("Segoe UI", 12),
+            fill="#888888",
+        )
+        self._empty_state_ids.append(secondary_text_id)
+
+        # Supported formats hint
+        formats_text_id = self.canvas.create_text(
+            center_x, center_y + 85,
+            text="Supports JPG, PNG, TIFF, RAW (CR2, CR3, NEF, ARW, DNG, RAF)",
+            font=("Segoe UI", 10),
+            fill="#555555",
+        )
+        self._empty_state_ids.append(formats_text_id)
 
     def _on_mouse_down(self, event):
-        """Start dragging the crop."""
-        if self._crop is None or self._current_image is None:
+        """Start dragging the crop or trigger file add when empty."""
+        # If no image loaded, trigger file addition callback
+        if self._current_image is None:
+            if self._on_empty_click:
+                self._on_empty_click()
+            return
+
+        if self._crop is None:
             return
 
         crop_left = self._display_offset_x + int(self._crop.left * self._display_width)
@@ -190,9 +264,10 @@ class PreviewWidget(ctk.CTkFrame):
         self._crop = None
         self._detection = None
         self.canvas.delete("preview")
-        self.canvas.itemconfigure(self._placeholder_id, state="normal")
         self._ar_label.configure(text="")
         self._dim_label.configure(text="")
+        # Redraw empty state
+        self._draw_empty_state()
 
     def load_image(
         self,
@@ -206,16 +281,26 @@ class PreviewWidget(ctk.CTkFrame):
             self._current_path = image_path
             self._crop = crop
             self._detection = detection
-            self.canvas.itemconfigure(self._placeholder_id, state="hidden")
+            # Clear empty state elements
+            for item_id in self._empty_state_ids:
+                self.canvas.delete(item_id)
+            self._empty_state_ids = []
+            # Restore crosshair cursor for image interaction
+            self.canvas.config(cursor="crosshair")
             self._draw_preview()
             self._update_info_labels()
         except Exception as e:
             self.clear()
-            self.canvas.itemconfigure(
-                self._placeholder_id,
+            # Show error on canvas
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            error_id = self.canvas.create_text(
+                canvas_width // 2, canvas_height // 2,
                 text=f"Error loading image:\n{e}",
-                state="normal",
+                fill="#EF4444",
+                font=("Segoe UI", 12),
             )
+            self._empty_state_ids.append(error_id)
 
     def update_crop(self, crop: CropRegion | None, detection: Detection | None = None):
         """Update the crop overlay without reloading the image."""

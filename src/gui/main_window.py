@@ -187,11 +187,23 @@ class MainWindow(ctk.CTk):
 
     def _set_app_icon(self):
         """Set the application window icon."""
-        icon_path = Path(__file__).parent.parent.parent / "branding" / "FramePilot Icon Mark.png"
-        if icon_path.exists():
+        branding_dir = Path(__file__).parent.parent.parent / "branding"
+
+        # On Windows, use .ico file with iconbitmap for proper taskbar/window icons
+        if sys.platform == "win32":
+            ico_path = branding_dir / "framepilot.ico"
+            if ico_path.exists():
+                try:
+                    self.iconbitmap(str(ico_path))
+                    return
+                except Exception:
+                    pass  # Fall through to PNG method
+
+        # Fallback: use PNG with iconphoto (works on Linux/macOS)
+        png_path = branding_dir / "FramePilot Icon Mark.png"
+        if png_path.exists():
             try:
-                icon_img = Image.open(icon_path)
-                # Resize for icon (Windows typically wants 32x32 or 48x48)
+                icon_img = Image.open(png_path)
                 icon_img = icon_img.resize((48, 48), Image.Resampling.LANCZOS)
                 self._icon_photo = ImageTk.PhotoImage(icon_img)
                 self.iconphoto(True, self._icon_photo)
@@ -518,7 +530,11 @@ class MainWindow(ctk.CTk):
                                           border_width=1, border_color=BRAND_COLORS["border"])
         preview_container.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
 
-        self._preview = PreviewWidget(preview_container, on_crop_changed=self._on_crop_dragged)
+        self._preview = PreviewWidget(
+            preview_container,
+            on_crop_changed=self._on_crop_dragged,
+            on_empty_click=self._add_files,
+        )
         self._preview.pack(fill="both", expand=True, padx=2, pady=2)
 
     def _setup_drag_drop(self):

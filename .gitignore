@@ -28,3 +28,7 @@ Thumbs.db
 
 # Config overrides
 config/local_config.yaml
+
+# PyInstaller
+build/
+dist/
