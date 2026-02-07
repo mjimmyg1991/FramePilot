@@ -61,6 +61,7 @@ class ProcessingWorker:
         aspect_ratio: tuple[int, int] = (4, 5),
         padding: float = 0.15,
         strategy: str = "highest_confidence",
+        precise_mode: bool = False,
     ) -> None:
         """Start processing files in background thread.
 
@@ -69,11 +70,13 @@ class ProcessingWorker:
             aspect_ratio: Target aspect ratio (width, height)
             padding: Padding around subject
             strategy: Subject selection strategy
+            precise_mode: Use segmentation model for tighter crops (slower)
         """
         if self.is_running:
             return
 
         self._cancel_flag.clear()
+        self._precise_mode = precise_mode
         self._thread = threading.Thread(
             target=self._process_files,
             args=(files, aspect_ratio, padding, strategy),
@@ -93,11 +96,17 @@ class ProcessingWorker:
         strategy: str,
     ) -> None:
         """Process files (runs in background thread)."""
-        # Lazy-load detector
-        if self._detector is None:
+        # Determine model based on precise_mode
+        precise_mode = getattr(self, '_precise_mode', False)
+        model_name = "yolov8m-seg.pt" if precise_mode else "yolov8m.pt"
+        use_tight = precise_mode
+
+        # Reload detector if model changed or not loaded
+        if self._detector is None or getattr(self._detector, 'yolo_model_name', '') != model_name:
             if self.on_progress:
-                self.on_progress(0, len(files), "Loading detection model...")
-            self._detector = SubjectDetector()
+                mode_str = "precise" if precise_mode else "fast"
+                self.on_progress(0, len(files), f"Loading {mode_str} detection model...")
+            self._detector = SubjectDetector(yolo_model=model_name, use_tight_bbox=use_tight)
 
         results = []
         for i, file_path in enumerate(files):
@@ -210,12 +219,84 @@ def write_xmp_for_results(
     return xmp_results
 
 
+def apply_watermark(
+    image: "Image.Image",
+    watermark_path: str,
+    position: str = "Bottom Right",
+    opacity: float = 0.5,
+    size: float = 0.15,
+) -> "Image.Image":
+    """Apply a watermark to an image.
+
+    Args:
+        image: PIL Image to watermark
+        watermark_path: Path to watermark image file
+        position: One of "Bottom Right", "Bottom Left", "Top Right", "Top Left", "Center"
+        opacity: Opacity of watermark (0-1)
+        size: Size of watermark as fraction of image width (0-1)
+
+    Returns:
+        Watermarked image
+    """
+    from PIL import Image
+
+    # Load watermark
+    watermark = Image.open(watermark_path)
+
+    # Ensure watermark has alpha channel
+    if watermark.mode != "RGBA":
+        watermark = watermark.convert("RGBA")
+
+    # Calculate watermark size
+    img_w, img_h = image.size
+    wm_target_width = int(img_w * size)
+    wm_scale = wm_target_width / watermark.width
+    wm_new_height = int(watermark.height * wm_scale)
+    watermark = watermark.resize((wm_target_width, wm_new_height), Image.Resampling.LANCZOS)
+
+    # Apply opacity
+    if opacity < 1.0:
+        alpha = watermark.split()[3]
+        alpha = alpha.point(lambda p: int(p * opacity))
+        watermark.putalpha(alpha)
+
+    # Calculate position
+    margin = int(img_w * 0.02)  # 2% margin
+    wm_w, wm_h = watermark.size
+
+    if position == "Bottom Right":
+        x = img_w - wm_w - margin
+        y = img_h - wm_h - margin
+    elif position == "Bottom Left":
+        x = margin
+        y = img_h - wm_h - margin
+    elif position == "Top Right":
+        x = img_w - wm_w - margin
+        y = margin
+    elif position == "Top Left":
+        x = margin
+        y = margin
+    else:  # Center
+        x = (img_w - wm_w) // 2
+        y = (img_h - wm_h) // 2
+
+    # Ensure image is RGBA for compositing
+    if image.mode != "RGBA":
+        image = image.convert("RGBA")
+
+    # Paste watermark
+    image.paste(watermark, (x, y), watermark)
+
+    return image
+
+
 def export_cropped_images(
     results: list[ProcessingResult],
     output_dir: Path,
     jpeg_quality: int = 92,
     suffix: str = "_cropped",
     max_dimension: int | None = None,
+    watermark: dict | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> list[tuple[Path, bool, str]]:
     """Export cropped images as JPEG files.
@@ -226,6 +307,7 @@ def export_cropped_images(
         jpeg_quality: JPEG quality (1-100)
         suffix: Suffix to add to filename (e.g., "_cropped")
         max_dimension: Maximum width or height in pixels (None = no limit)
+        watermark: Optional dict with keys: path, position, opacity, size
         on_progress: Callback(current, total) for progress
 
     Returns:
@@ -266,6 +348,16 @@ def export_cropped_images(
                     new_w = int(crop_w * scale)
                     new_h = int(crop_h * scale)
                     cropped = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+            # Apply watermark if specified
+            if watermark:
+                cropped = apply_watermark(
+                    cropped,
+                    watermark["path"],
+                    position=watermark.get("position", "Bottom Right"),
+                    opacity=watermark.get("opacity", 0.5),
+                    size=watermark.get("size", 0.15),
+                )
 
             # Generate output filename
             stem = result.file_path.stem

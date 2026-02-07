@@ -42,9 +42,11 @@ class PreviewWidget(ctk.CTkFrame):
 
         # Drag state
         self._dragging = False
+        self._drag_mode = "move"  # "move", "resize_tl", "resize_tr", "resize_bl", "resize_br", "resize_l", "resize_r", "resize_t", "resize_b"
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._drag_start_crop: CropRegion | None = None
+        self._edge_threshold = 15  # Pixels from edge to trigger resize
 
         # Display metrics
         self._display_scale = 1.0
@@ -52,6 +54,19 @@ class PreviewWidget(ctk.CTkFrame):
         self._display_offset_y = 0
         self._display_width = 0
         self._display_height = 0
+
+        # Zoom state
+        self._zoom_level = 1.0  # 1.0 = fit to window
+        self._zoom_min = 0.25
+        self._zoom_max = 5.0
+        self._pan_x = 0.0  # Pan offset (normalized, 0 = centered)
+        self._pan_y = 0.0
+        self._fit_scale = 1.0  # Scale that fits image to window
+
+        # Pan drag state
+        self._panning = False
+        self._pan_start_x = 0
+        self._pan_start_y = 0
 
         self._setup_ui()
 
@@ -67,11 +82,53 @@ class PreviewWidget(ctk.CTkFrame):
         )
         self._ar_label.pack(side="left")
 
+        # Zoom controls (right side)
+        zoom_frame = ctk.CTkFrame(self._info_frame, fg_color="transparent")
+        zoom_frame.pack(side="right", padx=(8, 0))
+
+        self._zoom_out_btn = ctk.CTkButton(
+            zoom_frame, text="-", width=28, height=24,
+            fg_color="#2a2a2e", hover_color="#3a3a3e",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._zoom_out
+        )
+        self._zoom_out_btn.pack(side="left", padx=1)
+
+        self._zoom_label = ctk.CTkLabel(
+            zoom_frame, text="Fit",
+            font=ctk.CTkFont(size=11), width=50
+        )
+        self._zoom_label.pack(side="left", padx=2)
+
+        self._zoom_in_btn = ctk.CTkButton(
+            zoom_frame, text="+", width=28, height=24,
+            fg_color="#2a2a2e", hover_color="#3a3a3e",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._zoom_in
+        )
+        self._zoom_in_btn.pack(side="left", padx=1)
+
+        self._fit_btn = ctk.CTkButton(
+            zoom_frame, text="Fit", width=38, height=24,
+            fg_color="#2a2a2e", hover_color="#3a3a3e",
+            font=ctk.CTkFont(size=11),
+            command=self._zoom_fit
+        )
+        self._fit_btn.pack(side="left", padx=(8, 1))
+
+        self._100_btn = ctk.CTkButton(
+            zoom_frame, text="100%", width=45, height=24,
+            fg_color="#2a2a2e", hover_color="#3a3a3e",
+            font=ctk.CTkFont(size=11),
+            command=self._zoom_100
+        )
+        self._100_btn.pack(side="left", padx=1)
+
         self._dim_label = ctk.CTkLabel(
             self._info_frame, text="",
             font=ctk.CTkFont(size=12), text_color="gray"
         )
-        self._dim_label.pack(side="right")
+        self._dim_label.pack(side="right", padx=(0, 12))
 
         # Canvas for image display
         self.canvas = tk.Canvas(
@@ -90,6 +147,20 @@ class PreviewWidget(ctk.CTkFrame):
         self.canvas.bind("<ButtonPress-1>", self._on_mouse_down)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
+        self.canvas.bind("<Motion>", self._on_mouse_move)
+
+        # Zoom bindings
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)  # Windows
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)    # Linux scroll up
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)    # Linux scroll down
+
+        # Pan bindings (middle mouse or Ctrl+left)
+        self.canvas.bind("<ButtonPress-2>", self._on_pan_start)
+        self.canvas.bind("<B2-Motion>", self._on_pan_motion)
+        self.canvas.bind("<ButtonRelease-2>", self._on_pan_end)
+        self.canvas.bind("<Control-ButtonPress-1>", self._on_pan_start)
+        self.canvas.bind("<Control-B1-Motion>", self._on_pan_motion)
+        self.canvas.bind("<Control-ButtonRelease-1>", self._on_pan_end)
 
     def _on_resize(self, event):
         """Handle canvas resize."""
@@ -167,6 +238,83 @@ class PreviewWidget(ctk.CTkFrame):
         )
         self._empty_state_ids.append(formats_text_id)
 
+    def _get_crop_bounds(self) -> tuple[int, int, int, int]:
+        """Get crop bounds in screen coordinates."""
+        if self._crop is None:
+            return (0, 0, 0, 0)
+        crop_left = self._display_offset_x + int(self._crop.left * self._display_width)
+        crop_top = self._display_offset_y + int(self._crop.top * self._display_height)
+        crop_right = self._display_offset_x + int(self._crop.right * self._display_width)
+        crop_bottom = self._display_offset_y + int(self._crop.bottom * self._display_height)
+        return (crop_left, crop_top, crop_right, crop_bottom)
+
+    def _get_drag_mode(self, x: int, y: int) -> str:
+        """Determine what kind of drag operation based on mouse position."""
+        if self._crop is None:
+            return ""
+
+        crop_left, crop_top, crop_right, crop_bottom = self._get_crop_bounds()
+        t = self._edge_threshold
+
+        # Check if outside crop entirely
+        if x < crop_left - t or x > crop_right + t or y < crop_top - t or y > crop_bottom + t:
+            return ""
+
+        # Check corners first (priority over edges)
+        near_left = abs(x - crop_left) < t
+        near_right = abs(x - crop_right) < t
+        near_top = abs(y - crop_top) < t
+        near_bottom = abs(y - crop_bottom) < t
+
+        if near_top and near_left:
+            return "resize_tl"
+        if near_top and near_right:
+            return "resize_tr"
+        if near_bottom and near_left:
+            return "resize_bl"
+        if near_bottom and near_right:
+            return "resize_br"
+
+        # Check edges
+        if near_left and crop_top < y < crop_bottom:
+            return "resize_l"
+        if near_right and crop_top < y < crop_bottom:
+            return "resize_r"
+        if near_top and crop_left < x < crop_right:
+            return "resize_t"
+        if near_bottom and crop_left < x < crop_right:
+            return "resize_b"
+
+        # Inside crop area = move
+        if crop_left <= x <= crop_right and crop_top <= y <= crop_bottom:
+            return "move"
+
+        return ""
+
+    def _get_cursor_for_mode(self, mode: str) -> str:
+        """Get cursor style for drag mode."""
+        cursors = {
+            "move": "fleur",
+            "resize_tl": "top_left_corner",
+            "resize_tr": "top_right_corner",
+            "resize_bl": "bottom_left_corner",
+            "resize_br": "bottom_right_corner",
+            "resize_l": "sb_h_double_arrow",
+            "resize_r": "sb_h_double_arrow",
+            "resize_t": "sb_v_double_arrow",
+            "resize_b": "sb_v_double_arrow",
+        }
+        return cursors.get(mode, "crosshair")
+
+    def _on_mouse_move(self, event):
+        """Update cursor based on mouse position over crop edges."""
+        if self._current_image is None or self._crop is None or self._dragging:
+            return
+
+        mode = self._get_drag_mode(event.x, event.y)
+        cursor = self._get_cursor_for_mode(mode) if mode else "crosshair"
+        self.canvas.config(cursor=cursor)
+
     def _on_mouse_down(self, event):
         """Start dragging the crop or trigger file add when empty."""
         # If no image loaded, trigger file addition callback
@@ -178,13 +326,10 @@ class PreviewWidget(ctk.CTkFrame):
         if self._crop is None:
             return
 
-        crop_left = self._display_offset_x + int(self._crop.left * self._display_width)
-        crop_top = self._display_offset_y + int(self._crop.top * self._display_height)
-        crop_right = self._display_offset_x + int(self._crop.right * self._display_width)
-        crop_bottom = self._display_offset_y + int(self._crop.bottom * self._display_height)
-
-        if crop_left <= event.x <= crop_right and crop_top <= event.y <= crop_bottom:
+        mode = self._get_drag_mode(event.x, event.y)
+        if mode:
             self._dragging = True
+            self._drag_mode = mode
             self._drag_start_x = event.x
             self._drag_start_y = event.y
             self._drag_start_crop = CropRegion(
@@ -193,31 +338,156 @@ class PreviewWidget(ctk.CTkFrame):
                 top=self._crop.top,
                 bottom=self._crop.bottom,
             )
-            self.canvas.config(cursor="fleur")
+            self.canvas.config(cursor=self._get_cursor_for_mode(mode))
 
     def _on_mouse_drag(self, event):
-        """Handle crop dragging."""
+        """Handle crop dragging or resizing."""
         if not self._dragging or self._drag_start_crop is None:
             return
 
         dx = (event.x - self._drag_start_x) / self._display_width
         dy = (event.y - self._drag_start_y) / self._display_height
 
-        crop_width = self._drag_start_crop.width
-        crop_height = self._drag_start_crop.height
+        start = self._drag_start_crop
+        aspect_ratio = start.width / start.height if start.height > 0 else 1.0
 
-        new_left = self._drag_start_crop.left + dx
-        new_top = self._drag_start_crop.top + dy
+        if self._drag_mode == "move":
+            # Move crop while maintaining size
+            crop_width = start.width
+            crop_height = start.height
+            new_left = max(0, min(1 - crop_width, start.left + dx))
+            new_top = max(0, min(1 - crop_height, start.top + dy))
+            self._crop = CropRegion(
+                left=new_left,
+                right=new_left + crop_width,
+                top=new_top,
+                bottom=new_top + crop_height,
+            )
+        else:
+            # Resize while maintaining aspect ratio
+            new_left = start.left
+            new_right = start.right
+            new_top = start.top
+            new_bottom = start.bottom
 
-        new_left = max(0, min(1 - crop_width, new_left))
-        new_top = max(0, min(1 - crop_height, new_top))
+            if self._drag_mode in ("resize_br", "resize_r", "resize_b"):
+                # Resize from bottom-right: anchor top-left
+                if self._drag_mode == "resize_r":
+                    new_right = max(new_left + 0.05, min(1.0, start.right + dx))
+                    new_width = new_right - new_left
+                    new_height = new_width / aspect_ratio
+                    new_bottom = new_top + new_height
+                elif self._drag_mode == "resize_b":
+                    new_bottom = max(new_top + 0.05, min(1.0, start.bottom + dy))
+                    new_height = new_bottom - new_top
+                    new_width = new_height * aspect_ratio
+                    new_right = new_left + new_width
+                else:  # resize_br
+                    # Use the larger movement to determine resize
+                    if abs(dx) > abs(dy):
+                        new_right = max(new_left + 0.05, min(1.0, start.right + dx))
+                        new_width = new_right - new_left
+                        new_height = new_width / aspect_ratio
+                        new_bottom = new_top + new_height
+                    else:
+                        new_bottom = max(new_top + 0.05, min(1.0, start.bottom + dy))
+                        new_height = new_bottom - new_top
+                        new_width = new_height * aspect_ratio
+                        new_right = new_left + new_width
 
-        self._crop = CropRegion(
-            left=new_left,
-            right=new_left + crop_width,
-            top=new_top,
-            bottom=new_top + crop_height,
-        )
+            elif self._drag_mode in ("resize_tl", "resize_l", "resize_t"):
+                # Resize from top-left: anchor bottom-right
+                if self._drag_mode == "resize_l":
+                    new_left = max(0, min(new_right - 0.05, start.left + dx))
+                    new_width = new_right - new_left
+                    new_height = new_width / aspect_ratio
+                    new_top = new_bottom - new_height
+                elif self._drag_mode == "resize_t":
+                    new_top = max(0, min(new_bottom - 0.05, start.top + dy))
+                    new_height = new_bottom - new_top
+                    new_width = new_height * aspect_ratio
+                    new_left = new_right - new_width
+                else:  # resize_tl
+                    if abs(dx) > abs(dy):
+                        new_left = max(0, min(new_right - 0.05, start.left + dx))
+                        new_width = new_right - new_left
+                        new_height = new_width / aspect_ratio
+                        new_top = new_bottom - new_height
+                    else:
+                        new_top = max(0, min(new_bottom - 0.05, start.top + dy))
+                        new_height = new_bottom - new_top
+                        new_width = new_height * aspect_ratio
+                        new_left = new_right - new_width
+
+            elif self._drag_mode == "resize_tr":
+                # Resize from top-right: anchor bottom-left
+                if abs(dx) > abs(dy):
+                    new_right = max(new_left + 0.05, min(1.0, start.right + dx))
+                    new_width = new_right - new_left
+                    new_height = new_width / aspect_ratio
+                    new_top = new_bottom - new_height
+                else:
+                    new_top = max(0, min(new_bottom - 0.05, start.top + dy))
+                    new_height = new_bottom - new_top
+                    new_width = new_height * aspect_ratio
+                    new_right = new_left + new_width
+
+            elif self._drag_mode == "resize_bl":
+                # Resize from bottom-left: anchor top-right
+                if abs(dx) > abs(dy):
+                    new_left = max(0, min(new_right - 0.05, start.left + dx))
+                    new_width = new_right - new_left
+                    new_height = new_width / aspect_ratio
+                    new_bottom = new_top + new_height
+                else:
+                    new_bottom = max(new_top + 0.05, min(1.0, start.bottom + dy))
+                    new_height = new_bottom - new_top
+                    new_width = new_height * aspect_ratio
+                    new_left = new_right - new_width
+
+            # Clamp to image bounds
+            if new_left < 0:
+                new_left = 0
+                new_width = new_right - new_left
+                new_height = new_width / aspect_ratio
+                if self._drag_mode in ("resize_tl", "resize_t", "resize_l"):
+                    new_top = new_bottom - new_height
+                else:
+                    new_bottom = new_top + new_height
+
+            if new_right > 1.0:
+                new_right = 1.0
+                new_width = new_right - new_left
+                new_height = new_width / aspect_ratio
+                if self._drag_mode in ("resize_tr", "resize_t", "resize_r"):
+                    new_top = new_bottom - new_height
+                else:
+                    new_bottom = new_top + new_height
+
+            if new_top < 0:
+                new_top = 0
+                new_height = new_bottom - new_top
+                new_width = new_height * aspect_ratio
+                if self._drag_mode in ("resize_tl", "resize_l", "resize_t"):
+                    new_left = new_right - new_width
+                else:
+                    new_right = new_left + new_width
+
+            if new_bottom > 1.0:
+                new_bottom = 1.0
+                new_height = new_bottom - new_top
+                new_width = new_height * aspect_ratio
+                if self._drag_mode in ("resize_bl", "resize_l", "resize_b"):
+                    new_left = new_right - new_width
+                else:
+                    new_right = new_left + new_width
+
+            self._crop = CropRegion(
+                left=max(0, new_left),
+                right=min(1.0, new_right),
+                top=max(0, new_top),
+                bottom=min(1.0, new_bottom),
+            )
 
         self._draw_preview()
         self._update_info_labels()
@@ -230,6 +500,114 @@ class PreviewWidget(ctk.CTkFrame):
 
             if self._on_crop_changed and self._crop:
                 self._on_crop_changed(self._crop)
+
+    # Zoom methods
+    def _zoom_in(self):
+        """Zoom in by 25%."""
+        self._set_zoom(self._zoom_level * 1.25)
+
+    def _zoom_out(self):
+        """Zoom out by 20%."""
+        self._set_zoom(self._zoom_level * 0.8)
+
+    def _zoom_fit(self):
+        """Reset zoom to fit window."""
+        self._zoom_level = 1.0
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self._update_zoom_label()
+        self._draw_preview()
+
+    def _zoom_100(self):
+        """Set zoom to actual pixels (100%)."""
+        if self._current_image is None or self._fit_scale == 0:
+            return
+        self._zoom_level = 1.0 / self._fit_scale
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self._update_zoom_label()
+        self._draw_preview()
+
+    def _set_zoom(self, level: float, center_x: int | None = None, center_y: int | None = None):
+        """Set zoom level, optionally centered on a point."""
+        old_zoom = self._zoom_level
+        self._zoom_level = max(self._zoom_min, min(self._zoom_max, level))
+
+        # Adjust pan to keep the center point stationary when zooming with mouse
+        if center_x is not None and center_y is not None and self._display_width > 0:
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+
+            # Convert screen point to normalized image coordinates
+            rel_x = (center_x - canvas_width / 2) / (self._display_width * old_zoom) if self._display_width else 0
+            rel_y = (center_y - canvas_height / 2) / (self._display_height * old_zoom) if self._display_height else 0
+
+            # Adjust pan so the same image point stays under the cursor
+            zoom_ratio = self._zoom_level / old_zoom
+            self._pan_x = self._pan_x + rel_x * (1 - zoom_ratio)
+            self._pan_y = self._pan_y + rel_y * (1 - zoom_ratio)
+
+        self._clamp_pan()
+        self._update_zoom_label()
+        self._draw_preview()
+
+    def _clamp_pan(self):
+        """Clamp pan values to prevent scrolling past image edges."""
+        max_pan = max(0, (self._zoom_level - 1) / (2 * self._zoom_level)) if self._zoom_level > 0 else 0
+        self._pan_x = max(-max_pan, min(max_pan, self._pan_x))
+        self._pan_y = max(-max_pan, min(max_pan, self._pan_y))
+
+    def _update_zoom_label(self):
+        """Update zoom level display."""
+        if abs(self._zoom_level - 1.0) < 0.01:
+            self._zoom_label.configure(text="Fit")
+        else:
+            actual_zoom = self._zoom_level * self._fit_scale * 100
+            self._zoom_label.configure(text=f"{actual_zoom:.0f}%")
+
+    def _on_mouse_wheel(self, event):
+        """Handle mouse wheel zoom."""
+        if self._current_image is None:
+            return
+
+        # Determine scroll direction
+        if event.num == 4 or (hasattr(event, 'delta') and event.delta > 0):
+            factor = 1.15
+        else:
+            factor = 0.87
+
+        self._set_zoom(self._zoom_level * factor, event.x, event.y)
+
+    def _on_pan_start(self, event):
+        """Start panning."""
+        if self._current_image is None:
+            return
+        self._panning = True
+        self._pan_start_x = event.x
+        self._pan_start_y = event.y
+        self.canvas.config(cursor="fleur")
+
+    def _on_pan_motion(self, event):
+        """Handle pan dragging."""
+        if not self._panning or self._display_width == 0:
+            return
+
+        dx = (event.x - self._pan_start_x) / (self._display_width * self._zoom_level)
+        dy = (event.y - self._pan_start_y) / (self._display_height * self._zoom_level)
+
+        self._pan_x -= dx
+        self._pan_y -= dy
+        self._clamp_pan()
+
+        self._pan_start_x = event.x
+        self._pan_start_y = event.y
+        self._draw_preview()
+
+    def _on_pan_end(self, event):
+        """End panning."""
+        if self._panning:
+            self._panning = False
+            self.canvas.config(cursor="crosshair")
 
     def set_aspect_ratio(self, aspect: tuple[int, int], is_landscape: bool = False):
         """Set the aspect ratio for display info."""
@@ -281,6 +659,13 @@ class PreviewWidget(ctk.CTkFrame):
             self._current_path = image_path
             self._crop = crop
             self._detection = detection
+
+            # Reset zoom/pan for new image
+            self._zoom_level = 1.0
+            self._pan_x = 0.0
+            self._pan_y = 0.0
+            self._update_zoom_label()
+
             # Clear empty state elements
             for item_id in self._empty_state_ids:
                 self.canvas.delete(item_id)
@@ -326,11 +711,16 @@ class PreviewWidget(ctk.CTkFrame):
             return
 
         img_width, img_height = self._current_image.size
-        scale = min(
+
+        # Calculate fit scale (base scale that fits image to window)
+        self._fit_scale = min(
             (canvas_width - 40) / img_width,
             (canvas_height - 40) / img_height,
         )
-        scale = min(scale, 1.0)
+        self._fit_scale = min(self._fit_scale, 1.0)
+
+        # Apply zoom to get actual display scale
+        scale = self._fit_scale * self._zoom_level
 
         new_width = int(img_width * scale)
         new_height = int(img_height * scale)
@@ -338,8 +728,12 @@ class PreviewWidget(ctk.CTkFrame):
         self._display_scale = scale
         self._display_width = new_width
         self._display_height = new_height
-        self._display_offset_x = (canvas_width - new_width) // 2
-        self._display_offset_y = (canvas_height - new_height) // 2
+
+        # Calculate display position with pan offset
+        base_offset_x = (canvas_width - new_width) // 2
+        base_offset_y = (canvas_height - new_height) // 2
+        self._display_offset_x = int(base_offset_x - self._pan_x * new_width)
+        self._display_offset_y = int(base_offset_y - self._pan_y * new_height)
 
         resized = self._current_image.resize(
             (new_width, new_height),

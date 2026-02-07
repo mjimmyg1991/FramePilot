@@ -33,6 +33,9 @@ a = Analysis(
         (str(project_root / 'config'), 'config'),
         # OpenCV haar cascades for face detection
         (str(haarcascades_path), 'cv2/data'),
+        # YOLO model files
+        (str(project_root / 'yolov8m.pt'), '.'),
+        (str(project_root / 'yolov8m-seg.pt'), '.'),
     ],
     hiddenimports=[
         'customtkinter',

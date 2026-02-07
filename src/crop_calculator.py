@@ -50,9 +50,80 @@ class CropRegion:
         }
 
 
+def combine_detections(detections: list[Detection]) -> Detection | None:
+    """Combine multiple detections into a single bounding box.
+
+    Useful for group shots or contested possession in sports where
+    you want to include all detected subjects in the crop.
+
+    Args:
+        detections: List of Detection objects
+
+    Returns:
+        A synthetic Detection covering all input detections, or None if empty
+    """
+    if not detections:
+        return None
+
+    if len(detections) == 1:
+        return detections[0]
+
+    # Find bounding box that encompasses all detections
+    min_x = min(d.bbox[0] for d in detections)
+    min_y = min(d.bbox[1] for d in detections)
+    max_x = max(d.bbox[2] for d in detections)
+    max_y = max(d.bbox[3] for d in detections)
+
+    # Average confidence and sharpness
+    avg_confidence = sum(d.confidence for d in detections) / len(detections)
+    avg_sharpness = sum(d.sharpness for d in detections) / len(detections)
+
+    return Detection(
+        bbox=(min_x, min_y, max_x, max_y),
+        confidence=avg_confidence,
+        label="group",
+        sharpness=avg_sharpness,
+        mask=None,
+        original_bbox=(min_x, min_y, max_x, max_y)
+    )
+
+
+def should_use_landscape(
+    detections: list[Detection],
+    threshold: float = 1.5
+) -> bool:
+    """Determine if the image should use landscape orientation based on subject layout.
+
+    Checks if subjects are arranged more horizontally than vertically,
+    which is common in team photos, group shots, or huddles.
+
+    Args:
+        detections: List of Detection objects
+        threshold: Ratio of width/height above which landscape is recommended
+
+    Returns:
+        True if landscape orientation is recommended
+    """
+    if not detections:
+        return False
+
+    if len(detections) == 1:
+        # Single detection - check if it's wider than tall
+        det = detections[0]
+        return det.width / det.height > threshold if det.height > 0 else False
+
+    # Multiple detections - check combined bounding box
+    combined = combine_detections(detections)
+    if combined is None:
+        return False
+
+    # Check if the combined area is significantly wider than tall
+    return combined.width / combined.height > threshold if combined.height > 0 else False
+
+
 def select_primary_subject(
     detections: list[Detection],
-    strategy: Literal["largest", "centered", "highest_confidence"] = "highest_confidence"
+    strategy: Literal["largest", "centered", "highest_confidence", "group"] = "highest_confidence"
 ) -> Detection | None:
     """Select the primary subject from a list of detections.
 
@@ -107,6 +178,9 @@ def select_primary_subject(
         # Combine confidence with sharpness
         # confidence * sharpness_factor gives strong preference to sharp + confident
         return max(detections, key=lambda d: d.confidence * sharpness_factor(d))
+    elif strategy == "group":
+        # Combine all detections into a single bounding box
+        return combine_detections(detections)
     else:
         raise ValueError(f"Unknown selection strategy: {strategy}")
 

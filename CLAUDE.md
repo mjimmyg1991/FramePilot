@@ -40,7 +40,7 @@ lightroom-subject-crop/
 │
 ├── src/
 │   ├── main.py                     # CLI entry (typer)
-│   ├── detector.py                 # YOLO + face detection
+│   ├── detector.py                 # YOLOv8m-seg + face detection
 │   ├── crop_calculator.py          # Crop math & subject selection
 │   ├── xmp_handler.py              # XMP sidecar read/write
 │   ├── presets.py                  # Shoot types, destinations, strategies
@@ -48,7 +48,8 @@ lightroom-subject-crop/
 │   │
 │   ├── gui/
 │   │   ├── main_window.py          # Main CustomTkinter window
-│   │   ├── preview_widget.py       # Canvas preview with crop overlay
+│   │   ├── preview_widget.py       # Canvas preview with crop overlay + zoom
+│   │   ├── thumbnail_grid.py       # Batch preview thumbnail grid
 │   │   ├── worker.py               # Background processing thread
 │   │   └── catalog_browser.py      # Catalog import dialog
 │   │
@@ -63,7 +64,7 @@ lightroom-subject-crop/
 
 ### Key Data Flow
 
-1. **Detection**: `detector.py` → YOLO detects persons → returns `Detection` objects with normalized bboxes
+1. **Detection**: `detector.py` → YOLOv8m-seg detects persons with segmentation masks → returns `Detection` objects with tight bboxes derived from masks
 2. **Subject Selection**: `crop_calculator.py` → picks primary subject via strategy (highest_confidence/largest/centered)
 3. **Crop Calculation**: `crop_calculator.py` → calculates `CropRegion` with padding, clamped to image bounds
 4. **Output**: `xmp_handler.py` → writes XMP sidecar OR `worker.py` → exports cropped JPEG
@@ -155,7 +156,7 @@ lightroom-subject-crop/
 
 | Package | Purpose |
 |---------|---------|
-| ultralytics | YOLO object detection |
+| ultralytics | YOLOv8 segmentation (yolov8m-seg.pt) |
 | opencv-python | Image processing, face detection fallback |
 | Pillow | Image manipulation, JPEG export |
 | lxml | XMP parsing and generation |
@@ -166,12 +167,28 @@ lightroom-subject-crop/
 
 ---
 
-## Current State
+## Current State (V2)
 
-- **Feature complete** - All planned features implemented
+- **V2 Feature complete** - All planned features implemented
 - **21 tests passing** - Core crop logic well-tested
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list
+
+### V2 New Features
+
+| Feature | Description |
+|---------|-------------|
+| **Segmentation Detection** | Uses YOLOv8m-seg for tighter bounding boxes derived from pixel-accurate masks |
+| **Batch Preview Grid** | Scrollable thumbnail grid showing cropped previews for quick review |
+| **Zoom Controls** | Mouse wheel zoom, +/- buttons, Fit/100% buttons, middle-mouse pan |
+| **Detection Dataclass** | Now includes `mask` (segmentation) and `original_bbox` fields |
+
+### Detection Model
+
+- **Model**: `yolov8m-seg.pt` (segmentation variant, ~50MB)
+- **Tight Bbox**: Derived from segmentation mask pixels via `bbox_from_mask()`
+- **Fallback**: Original YOLO bbox if mask processing fails
+- **Face Detection**: OpenCV Haar cascade as backup when no persons detected
 
 ---
 

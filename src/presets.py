@@ -10,6 +10,7 @@ class SubjectStrategy(Enum):
     SMART_SELECT = "highest_confidence"
     MAIN_SUBJECT = "largest"
     CENTER_STAGE = "centered"
+    ALL_SUBJECTS = "group"
 
     @classmethod
     def display_name(cls, strategy: "SubjectStrategy") -> str:
@@ -18,6 +19,7 @@ class SubjectStrategy(Enum):
             cls.SMART_SELECT: "Smart Select",
             cls.MAIN_SUBJECT: "Main Subject",
             cls.CENTER_STAGE: "Center Stage",
+            cls.ALL_SUBJECTS: "All Subjects",
         }
         return names.get(strategy, strategy.name)
 
@@ -28,6 +30,7 @@ class SubjectStrategy(Enum):
             cls.SMART_SELECT: "AI picks the best subject automatically",
             cls.MAIN_SUBJECT: "Focuses on the largest person in frame",
             cls.CENTER_STAGE: "Prioritizes whoever's most centered",
+            cls.ALL_SUBJECTS: "Includes all detected people in crop",
         }
         return descriptions.get(strategy, "")
 

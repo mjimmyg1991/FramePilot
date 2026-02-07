@@ -1,0 +1,55 @@
+name: Build FramePilot
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Download YOLO models
+        run: |
+          pip install ultralytics
+          python -c "from ultralytics import YOLO; YOLO('yolov8m.pt'); YOLO('yolov8m-seg.pt')"
+          copy "$env:USERPROFILE\.ultralytics\yolov8m.pt" yolov8m.pt 2>$null
+          copy "$env:USERPROFILE\.ultralytics\yolov8m-seg.pt" yolov8m-seg.pt 2>$null
+          if (!(Test-Path yolov8m.pt)) { python -c "from ultralytics import YOLO; m=YOLO('yolov8m.pt'); import shutil; shutil.copy(m.ckpt_path, 'yolov8m.pt')" }
+          if (!(Test-Path yolov8m-seg.pt)) { python -c "from ultralytics import YOLO; m=YOLO('yolov8m-seg.pt'); import shutil; shutil.copy(m.ckpt_path, 'yolov8m-seg.pt')" }
+          dir *.pt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Build with PyInstaller
+        run: pyinstaller framepilot.spec --noconfirm --clean
+
+      - name: Verify build
+        run: |
+          dir dist\FramePilot\FramePilot.exe
+          echo "Build size:"
+          (Get-Item dist\FramePilot\FramePilot.exe).Length
+
+      - name: Create ZIP archive
+        run: Compress-Archive -Path dist\FramePilot\* -DestinationPath dist\FramePilot.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FramePilot-Windows
+          path: dist/FramePilot.zip
+          retention-days: 30
