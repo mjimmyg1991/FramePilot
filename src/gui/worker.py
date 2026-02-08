@@ -330,6 +330,9 @@ def export_cropped_images(
             img = Image.open(result.file_path)
             width, height = img.size
 
+            # Preserve EXIF metadata
+            exif_data = img.info.get("exif")
+
             # Calculate crop box in pixels
             crop = result.crop
             left = int(crop.left * width)
@@ -374,7 +377,10 @@ def export_cropped_images(
             if cropped.mode in ("RGBA", "P"):
                 cropped = cropped.convert("RGB")
 
-            cropped.save(output_path, "JPEG", quality=jpeg_quality)
+            save_kwargs = {"quality": jpeg_quality}
+            if exif_data:
+                save_kwargs["exif"] = exif_data
+            cropped.save(output_path, "JPEG", **save_kwargs)
             export_results.append((output_path, True, "Exported"))
 
         except Exception as e:
