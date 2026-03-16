@@ -1,11 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec file for FramePilot."""
+"""PyInstaller spec file for FramePilot (Windows + macOS)."""
 
 import os
 import sys
 from pathlib import Path
 
 block_cipher = None
+is_macos = sys.platform == 'darwin'
 
 # Get paths to required packages
 import customtkinter
@@ -19,6 +20,12 @@ haarcascades_path = Path(cv2.data.haarcascades)
 
 # Project root
 project_root = Path(SPECPATH)
+
+# Platform-specific icon
+if is_macos:
+    icon_file = str(project_root / 'branding' / 'framepilot.icns')
+else:
+    icon_file = str(project_root / 'branding' / 'framepilot.ico')
 
 a = Analysis(
     ['app.py'],
@@ -108,7 +115,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(project_root / 'branding' / 'framepilot.ico'),
+    icon=icon_file,
 )
 
 coll = COLLECT(
@@ -121,3 +128,20 @@ coll = COLLECT(
     upx_exclude=[],
     name='FramePilot',
 )
+
+# macOS: wrap into .app bundle
+if is_macos:
+    app = BUNDLE(
+        coll,
+        name='FramePilot.app',
+        icon=icon_file,
+        bundle_identifier='com.framepilot.app',
+        info_plist={
+            'CFBundleDisplayName': 'FramePilot',
+            'CFBundleShortVersionString': '0.1.0',
+            'CFBundleVersion': '0.1.0',
+            'NSHighResolutionCapable': True,
+            'LSMinimumSystemVersion': '12.0',
+            'NSHumanReadableCopyright': 'Copyright © 2026 FramePilot',
+        },
+    )
