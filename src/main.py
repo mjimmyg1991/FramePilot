@@ -303,6 +303,65 @@ def process(
 
 
 @app.command()
+def watch(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Directory to watch for new images")
+    ],
+    aspect_ratio: Annotated[
+        str,
+        typer.Option("--aspect-ratio", "-a", help="Target aspect ratio (e.g., 4:5, 9:16)")
+    ] = "4:5",
+    padding: Annotated[
+        float,
+        typer.Option("--padding", "-p", help="Padding around subject (0.0-1.0)")
+    ] = 0.15,
+    detection_strategy: Annotated[
+        str,
+        typer.Option("--strategy", "-s", help="Subject selection: largest, centered, highest_confidence")
+    ] = "highest_confidence",
+) -> None:
+    """Watch a folder for new images and auto-generate XMP crop sidecars."""
+    from .watcher import FolderWatcher, WatcherResult
+
+    target_aspect = parse_aspect_ratio(aspect_ratio)
+
+    if not path.is_dir():
+        console.print(f"[red]Not a directory: {path}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Watching [cyan]{path}[/cyan] for new images...")
+    console.print(f"Aspect ratio: [cyan]{target_aspect[0]}:{target_aspect[1]}[/cyan]  Padding: [cyan]{padding:.0%}[/cyan]")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    def on_processed(result: WatcherResult):
+        if result.status == "success":
+            console.print(f"  [green]OK[/green] {result.file_path.name} → {result.xmp_path.name}")
+        elif result.status == "no_subject":
+            console.print(f"  [yellow]SKIP[/yellow] {result.file_path.name} (no subject)")
+        else:
+            console.print(f"  [red]ERR[/red] {result.file_path.name}: {result.error_message}")
+
+    watcher = FolderWatcher(
+        watch_dir=path,
+        aspect_ratio=target_aspect,
+        padding=padding,
+        strategy=detection_strategy,
+        on_file_processed=on_processed,
+    )
+
+    try:
+        watcher.start()
+        # Block until Ctrl+C
+        import time
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print(f"\n[dim]Stopping... processed {watcher.processed_count} files.[/dim]")
+        watcher.stop()
+
+
+@app.command()
 def version():
     """Show version information."""
     from . import __version__

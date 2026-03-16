@@ -8,6 +8,7 @@ rich>=13.0.0
 pytest>=7.0.0
 tkinterdnd2>=0.3.0  # Optional: enables drag & drop in GUI
 customtkinter>=5.2.0  # Modern UI widgets
+watchdog>=3.0.0  # Folder watch / hot folder mode
 
 # AI features (optional, for auto-detect)
 transformers>=4.30.0  # CLIP model for scene classification

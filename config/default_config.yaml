@@ -16,6 +16,12 @@ output:
   preview_quality: 85
   preview_max_size: 1920
 
+watcher:
+  enabled: false
+  watch_dir: ""
+  auto_xmp: true
+  debounce_seconds: 2
+
 supported_extensions:
   - .jpg
   - .jpeg

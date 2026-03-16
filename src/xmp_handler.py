@@ -210,6 +210,26 @@ def write_crop_to_xmp(
     return xmp_path
 
 
+def write_signal_file(image_paths: list[Path], signal_dir: Path) -> Path:
+    """Write a signal file for the Lightroom plugin to detect.
+
+    The Lightroom plugin watches for .framepilot_ready files and auto-triggers
+    "Read Metadata from Files" for the listed images.
+
+    Args:
+        image_paths: List of image paths that had XMP sidecars written
+        signal_dir: Directory to write the signal file in
+
+    Returns:
+        Path to the signal file
+    """
+    signal_path = signal_dir / ".framepilot_ready"
+    content = "\n".join(str(p) for p in image_paths)
+    with open(signal_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return signal_path
+
+
 def read_crop_from_xmp(xmp_path: str | Path) -> CropRegion | None:
     """Read existing crop data from an XMP file.
 
