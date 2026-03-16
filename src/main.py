@@ -211,14 +211,15 @@ def process(
                             f"primary: {primary.label} ({primary.confidence:.2f})"
                         )
 
-                    # Get image dimensions
-                    image = cv2.imread(str(image_path))
-                    if image is None:
-                        result["status"] = "error"
-                        result["error"] = "Failed to load image"
-                    else:
-                        height, width = image.shape[:2]
+                    # Get image dimensions without full decode
+                    from PIL import Image as PILImage
+                    with PILImage.open(image_path) as img:
+                        width, height = img.size
 
+                    if width == 0 or height == 0:
+                        result["status"] = "error"
+                        result["error"] = "Invalid image dimensions"
+                    else:
                         # Calculate crop
                         crop = calculate_crop_for_detection(
                             primary,

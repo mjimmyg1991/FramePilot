@@ -63,6 +63,11 @@ class _ImageHandler(FileSystemEventHandler):
                 return
             self._seen[key] = now
 
+            # Prune old entries to prevent unbounded memory growth
+            if len(self._seen) > 1000:
+                cutoff = now - self._debounce_seconds * 10
+                self._seen = {k: v for k, v in self._seen.items() if v > cutoff}
+
         self._on_new_file(path)
 
 

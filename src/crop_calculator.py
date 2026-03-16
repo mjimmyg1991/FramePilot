@@ -204,6 +204,10 @@ def calculate_vertical_crop(
     Returns:
         CropRegion with normalized coordinates
     """
+    # Validate inputs
+    if image_width <= 0 or image_height <= 0:
+        return CropRegion(left=0.0, right=1.0, top=0.0, bottom=1.0)
+
     # Calculate source and target aspect ratios
     source_aspect = image_width / image_height
     target_aspect_ratio = target_aspect[0] / target_aspect[1]

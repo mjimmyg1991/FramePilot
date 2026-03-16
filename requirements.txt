@@ -8,9 +8,6 @@ rich>=13.0.0,<14.0.0
 customtkinter>=5.2.0,<6.0.0
 watchdog>=3.0.0,<5.0.0
 
-# Optional: enables drag & drop in GUI
-tkinterdnd2>=0.3.0
-
 # Optional: AI scene classification (large download)
 # transformers>=4.30.0,<5.0.0
 # torch>=2.0.0,<3.0.0

@@ -1,12 +1,16 @@
 """Background worker thread for image processing."""
 
+import logging
 import threading
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Queue
 from typing import Callable
 
 import cv2
+
+logger = logging.getLogger(__name__)
 
 from ..crop_calculator import CropRegion, calculate_crop_for_detection, select_primary_subject
 from ..detector import Detection, SubjectDetector
@@ -139,15 +143,16 @@ class ProcessingWorker:
         result = ProcessingResult(file_path=file_path, status="pending")
 
         try:
-            # Get image dimensions
-            image = cv2.imread(str(file_path))
-            if image is None:
-                result.status = "error"
-                result.error_message = "Failed to load image"
-                return result
-
-            height, width = image.shape[:2]
+            # Get image dimensions without full decode (detector will load separately)
+            from PIL import Image
+            with Image.open(file_path) as img:
+                width, height = img.size
             result.image_size = (width, height)
+
+            if width == 0 or height == 0:
+                result.status = "error"
+                result.error_message = "Invalid image dimensions"
+                return result
 
             # Detect subjects
             detections = self._detector.detect(file_path)
@@ -175,6 +180,7 @@ class ProcessingWorker:
         except Exception as e:
             result.status = "error"
             result.error_message = str(e)
+            logger.error("Error processing %s:\n%s", file_path.name, traceback.format_exc())
 
         return result
 

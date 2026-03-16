@@ -365,6 +365,7 @@ class MainWindow(ctk.CTk):
         self._preset_buttons: dict[str, ctk.CTkButton] = {}
 
         self._setup_ui()
+        self._bind_keyboard_shortcuts()
 
     def _set_app_icon(self):
         branding_dir = resource_path("branding")
@@ -385,6 +386,25 @@ class MainWindow(ctk.CTk):
                 self.iconphoto(True, self._icon_photo)
             except Exception:
                 pass
+
+    def _bind_keyboard_shortcuts(self):
+        """Bind global keyboard shortcuts."""
+        self.bind_all("<Control-o>", lambda e: self._add_files())
+        self.bind_all("<Control-O>", lambda e: self._add_files())
+        self.bind_all("<Left>", lambda e: self._navigate_thumbnail(-1))
+        self.bind_all("<Right>", lambda e: self._navigate_thumbnail(1))
+
+    def _navigate_thumbnail(self, delta: int):
+        """Navigate thumbnail selection by delta (-1 = previous, +1 = next)."""
+        if not self._queue:
+            return
+        new_index = self._selected_index + delta
+        if new_index < 0:
+            new_index = 0
+        elif new_index >= len(self._queue):
+            new_index = len(self._queue) - 1
+        if new_index != self._selected_index:
+            self._select_queue_item(new_index)
 
     def _setup_ui(self):
         """Set up the main UI with top bar and content area."""
@@ -1152,6 +1172,8 @@ class MainWindow(ctk.CTk):
             return
 
         if self._worker.is_running:
+            if not messagebox.askyesno("Cancel Processing", "Are you sure you want to cancel? Progress will be lost."):
+                return
             self._worker.cancel()
             self._process_btn.configure(text="Process All")
             self._status_var.set("Cancelled")

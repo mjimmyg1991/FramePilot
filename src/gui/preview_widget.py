@@ -214,7 +214,7 @@ class PreviewWidget(ctk.CTkFrame):
         # Main instruction text with brand color
         main_text_id = self.canvas.create_text(
             center_x, center_y + 20,
-            text="Drop photos here to get started",
+            text="Click to add photos",
             font=("Segoe UI", 18, "bold"),
             fill=self.BRAND_ORANGE,
         )
@@ -636,6 +636,8 @@ class PreviewWidget(ctk.CTkFrame):
 
     def clear(self):
         """Clear the preview."""
+        if self._current_image is not None:
+            self._current_image.close()
         self._current_image = None
         self._current_path = None
         self._photo_image = None
@@ -655,6 +657,9 @@ class PreviewWidget(ctk.CTkFrame):
     ):
         """Load and display an image with optional crop overlay."""
         try:
+            # Close previous image to free file handle
+            if self._current_image is not None:
+                self._current_image.close()
             self._current_image = Image.open(image_path)
             self._current_path = image_path
             self._crop = crop
