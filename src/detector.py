@@ -278,25 +278,25 @@ class SubjectDetector:
                         mask_data = masks.data[i].cpu().numpy()
                         # Resize mask to original image size if needed
                         if mask_data.shape != (img_height, img_width):
-                            mask_array = cv2.resize(
-                                mask_data.astype(np.uint8),
+                            mask_resized = cv2.resize(
+                                (mask_data > 0.5).astype(np.uint8),
                                 (img_width, img_height),
                                 interpolation=cv2.INTER_NEAREST
                             )
                         else:
-                            mask_array = mask_data.astype(np.uint8)
+                            mask_resized = (mask_data > 0.5).astype(np.uint8)
 
-                        tight_bbox = bbox_from_mask(mask_array, img_width, img_height)
+                        tight_bbox = bbox_from_mask(mask_resized, img_width, img_height)
+                        # Don't store full-resolution mask — it consumes too much memory in batches
                     except Exception:
                         # Fall back to original bbox if mask processing fails
                         tight_bbox = original_bbox
-                        mask_array = None
 
                 detections.append(Detection(
                     bbox=tight_bbox,
                     confidence=conf,
                     label="person",
-                    mask=mask_array,
+                    mask=None,
                     original_bbox=original_bbox
                 ))
 

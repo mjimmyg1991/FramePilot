@@ -22,6 +22,7 @@ from ..crop_calculator import CropRegion, calculate_vertical_crop, should_use_la
 from ..catalog.lightroom import LightroomCatalog, is_catalog_locked
 from ..xmp_handler import write_signal_file
 from .. import resource_path
+from ..constants import SUPPORTED_EXTENSIONS, BRAND_COLORS
 from ..presets import (
     SHOOT_TYPES, DESTINATIONS, SubjectStrategy,
     get_shoot_type_names, get_destination_names, get_strategy_names,
@@ -32,26 +33,6 @@ from ..presets import (
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# FramePilot Brand Colors
-BRAND_COLORS = {
-    "orange": "#FF6B35",
-    "orange_dim": "#E55A2B",
-    "bg_primary": "#0A0A0B",
-    "bg_secondary": "#111113",
-    "bg_tertiary": "#1A1A1D",
-    "bg_card": "#151517",
-    "border": "#2A2A2E",
-    "text_primary": "#FFFFFF",
-    "text_secondary": "#A0A0A5",
-    "text_dim": "#6B6B70",
-    "success": "#22C55E",
-    "error": "#EF4444",
-}
-
-SUPPORTED_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".tif", ".tiff",
-    ".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf"
-}
 
 
 class ExportDialog(ctk.CTkToplevel):
@@ -505,6 +486,13 @@ class MainWindow(ctk.CTk):
         self._xmp_top_btn.pack(side="right", padx=4)
 
         ctk.CTkButton(
+            action_frame, text="About", width=60, height=32,
+            fg_color="transparent", hover_color=BRAND_COLORS["bg_tertiary"],
+            text_color=BRAND_COLORS["text_dim"],
+            command=self._show_about,
+        ).pack(side="right", padx=4)
+
+        ctk.CTkButton(
             action_frame, text="Plugin", width=60, height=32,
             fg_color="transparent", hover_color=BRAND_COLORS["bg_tertiary"],
             text_color=BRAND_COLORS["text_dim"],
@@ -825,7 +813,10 @@ class MainWindow(ctk.CTk):
 
     def _get_aspect_ratio(self) -> tuple[int, int]:
         try:
-            return (int(self._aspect_w.get()), int(self._aspect_h.get()))
+            w, h = int(self._aspect_w.get()), int(self._aspect_h.get())
+            if w <= 0 or h <= 0:
+                return (4, 5)
+            return (w, h)
         except ValueError:
             return (4, 5)
 
@@ -1079,6 +1070,42 @@ class MainWindow(ctk.CTk):
         from .plugin_installer import PluginInstallerDialog
         PluginInstallerDialog(self)
 
+    def _show_about(self):
+        """Show about dialog with version info."""
+        from .. import __version__
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("About FramePilot")
+        dialog.geometry("340x200")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.configure(fg_color=BRAND_COLORS["bg_secondary"])
+
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 340) // 2
+        y = self.winfo_y() + (self.winfo_height() - 200) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(
+            dialog, text="FramePilot",
+            font=ctk.CTkFont(size=22, weight="bold"),
+            text_color=BRAND_COLORS["orange"]
+        ).pack(pady=(24, 4))
+        ctk.CTkLabel(
+            dialog, text=f"Version {__version__}",
+            text_color=BRAND_COLORS["text_secondary"]
+        ).pack()
+        ctk.CTkLabel(
+            dialog, text="Smart crops. Zero effort.",
+            text_color=BRAND_COLORS["text_dim"],
+            font=ctk.CTkFont(size=12, slant="italic")
+        ).pack(pady=(8, 0))
+        ctk.CTkButton(
+            dialog, text="Close", width=80,
+            fg_color=BRAND_COLORS["bg_tertiary"], hover_color=BRAND_COLORS["border"],
+            command=dialog.destroy
+        ).pack(pady=(20, 0))
+
     def _add_file_to_queue(self, path: Path):
         for item in self._queue:
             if item["path"] == path:
@@ -1212,11 +1239,22 @@ class MainWindow(ctk.CTk):
             messagebox.showinfo("No Results", "Process files first.")
             return
 
+        self._xmp_top_btn.configure(state="disabled")
         self._status_var.set("Writing XMP files...")
-        xmp_results = write_xmp_for_results(results, on_progress=lambda c, t: self._update_progress(c, t, f"Writing XMP {c}/{t}..."))
-        success = sum(1 for _, ok, _ in xmp_results if ok)
-        self._status_var.set(f"Wrote {success} XMP files")
 
+        def _do_write():
+            xmp_results = write_xmp_for_results(
+                results,
+                on_progress=lambda c, t: self.after(0, lambda: self._update_progress(c, t, f"Writing XMP {c}/{t}...")),
+            )
+            success = sum(1 for _, ok, _ in xmp_results if ok)
+            self.after(0, lambda: self._xmp_write_done(success))
+
+        threading.Thread(target=_do_write, daemon=True).start()
+
+    def _xmp_write_done(self, success: int):
+        self._xmp_top_btn.configure(state="normal")
+        self._status_var.set(f"Wrote {success} XMP files")
         if success > 0:
             messagebox.showinfo("XMP Files Written",
                 f"Wrote {success} XMP sidecar files.\n\nIn Lightroom: Metadata → Read Metadata from Files")
@@ -1238,27 +1276,19 @@ class MainWindow(ctk.CTk):
         action = dialog.result
 
         if action == "xmp":
-            # Write XMP sidecars
+            add_collection = has_catalog and dialog.add_to_collection.get()
+            self._lr_btn.configure(state="disabled")
             self._status_var.set("Writing XMP files...")
-            xmp_results = write_xmp_for_results(results, on_progress=lambda c, t: self._update_progress(c, t, f"Writing XMP {c}/{t}..."))
-            success = sum(1 for _, ok, _ in xmp_results if ok)
-            self._status_var.set(f"Wrote {success} XMP files")
 
-            if success > 0:
-                # Write signal file for plugin auto-read
-                try:
-                    image_paths = [r.file_path for r in results if r.crop]
-                    signal_dir = results[0].file_path.parent if results else None
-                    if signal_dir:
-                        write_signal_file(image_paths, signal_dir)
-                except Exception:
-                    pass
+            def _do_lr_xmp():
+                xmp_results = write_xmp_for_results(
+                    results,
+                    on_progress=lambda c, t: self.after(0, lambda: self._update_progress(c, t, f"Writing XMP {c}/{t}...")),
+                )
+                success = sum(1 for _, ok, _ in xmp_results if ok)
+                self.after(0, lambda: self._lr_xmp_done(success, results, add_collection))
 
-                # Offer collection creation if images came from a catalog
-                if dialog.add_to_collection.get() and has_catalog:
-                    self._create_lightroom_collection(results)
-
-                self._open_lightroom_with_instructions()
+            threading.Thread(target=_do_lr_xmp, daemon=True).start()
 
         elif action == "import":
             # Export cropped images and open in Lightroom for import
@@ -1269,18 +1299,43 @@ class MainWindow(ctk.CTk):
             dest_preset = get_destination_by_name(self._destination.get())
             quality = dest_preset.jpeg_quality if dest_preset else 92
 
+            self._lr_btn.configure(state="disabled")
             self._status_var.set("Exporting for import...")
-            export_results = export_cropped_images(
-                results, output_dir=Path(folder), jpeg_quality=quality,
-                suffix="",  # No suffix for import
-                on_progress=lambda c, t: self._update_progress(c, t, f"Exporting {c}/{t}...")
-            )
 
-            success = sum(1 for _, ok, _ in export_results if ok)
-            self._status_var.set(f"Exported {success} images")
+            def _do_lr_export():
+                export_results = export_cropped_images(
+                    results, output_dir=Path(folder), jpeg_quality=quality,
+                    suffix="",
+                    on_progress=lambda c, t: self.after(0, lambda: self._update_progress(c, t, f"Exporting {c}/{t}...")),
+                )
+                success = sum(1 for _, ok, _ in export_results if ok)
+                self.after(0, lambda: self._lr_export_done(success, folder))
 
-            if success > 0:
-                self._open_lightroom_import(folder)
+            threading.Thread(target=_do_lr_export, daemon=True).start()
+
+    def _lr_xmp_done(self, success: int, results: list[ProcessingResult], add_collection: bool):
+        self._lr_btn.configure(state="normal")
+        self._status_var.set(f"Wrote {success} XMP files")
+
+        if success > 0:
+            try:
+                image_paths = [r.file_path for r in results if r.crop]
+                signal_dir = results[0].file_path.parent if results else None
+                if signal_dir:
+                    write_signal_file(image_paths, signal_dir)
+            except Exception:
+                pass
+
+            if add_collection:
+                self._create_lightroom_collection(results)
+
+            self._open_lightroom_with_instructions()
+
+    def _lr_export_done(self, success: int, folder: str):
+        self._lr_btn.configure(state="normal")
+        self._status_var.set(f"Exported {success} images")
+        if success > 0:
+            self._open_lightroom_import(folder)
 
     def _create_lightroom_collection(self, results: list[ProcessingResult]):
         """Create a Lightroom collection with processed images."""
@@ -1296,33 +1351,31 @@ class MainWindow(ctk.CTk):
         collection_name = dialog.result
 
         try:
-            catalog = LightroomCatalog(self._source_catalog_path)
-            catalog.open(readonly=False)
+            with LightroomCatalog(self._source_catalog_path) as catalog:
+                catalog.open(readonly=False)
 
-            collection_id = catalog.create_collection(collection_name)
+                collection_id = catalog.create_collection(collection_name)
 
-            # Gather image IDs
-            image_ids = []
-            for result in results:
-                img_id = self._source_image_ids.get(result.file_path)
-                if img_id is not None:
-                    image_ids.append(img_id)
+                # Gather image IDs
+                image_ids = []
+                for result in results:
+                    img_id = self._source_image_ids.get(result.file_path)
+                    if img_id is not None:
+                        image_ids.append(img_id)
 
-            if image_ids:
-                added = catalog.add_images_to_collection(collection_id, image_ids)
-                messagebox.showinfo(
-                    "Collection Created",
-                    f"Created collection \"{collection_name}\"\nwith {added} image(s).\n\n"
-                    "Restart Lightroom to see the new collection."
-                )
-            else:
-                messagebox.showinfo(
-                    "Collection Created",
-                    f"Created collection \"{collection_name}\" (empty).\n\n"
-                    "Could not match images to catalog entries."
-                )
-
-            catalog.close()
+                if image_ids:
+                    added = catalog.add_images_to_collection(collection_id, image_ids)
+                    messagebox.showinfo(
+                        "Collection Created",
+                        f"Created collection \"{collection_name}\"\nwith {added} image(s).\n\n"
+                        "Restart Lightroom to see the new collection."
+                    )
+                else:
+                    messagebox.showinfo(
+                        "Collection Created",
+                        f"Created collection \"{collection_name}\" (empty).\n\n"
+                        "Could not match images to catalog entries."
+                    )
 
         except Exception as e:
             messagebox.showerror(
@@ -1386,12 +1439,19 @@ class MainWindow(ctk.CTk):
                 if lr_path.exists():
                     lr_found = lr_path
                     break
+        elif sys.platform == "darwin":
+            lr_path = Path("/Applications/Adobe Lightroom Classic/Adobe Lightroom Classic.app")
+            if lr_path.exists():
+                lr_found = lr_path
 
         if lr_found and messagebox.askyesno("Open Lightroom?", msg + "\n\nOpen Lightroom now?"):
             try:
-                os.startfile(str(lr_found))
-                # Also open the folder
-                os.startfile(folder)
+                if sys.platform == "win32":
+                    os.startfile(str(lr_found))
+                    os.startfile(folder)
+                elif sys.platform == "darwin":
+                    subprocess.run(["open", str(lr_found)])
+                    subprocess.run(["open", folder])
             except Exception:
                 pass
         else:
@@ -1421,16 +1481,23 @@ class MainWindow(ctk.CTk):
 
         output_dir, quality, max_dim, watermark = dialog.result
 
+        self._export_top_btn.configure(state="disabled")
         self._status_var.set("Exporting...")
-        export_results = export_cropped_images(
-            results, output_dir=Path(output_dir), jpeg_quality=quality, max_dimension=max_dim,
-            watermark=watermark,
-            on_progress=lambda c, t: self._update_progress(c, t, f"Exporting {c}/{t}...")
-        )
 
-        success = sum(1 for _, ok, _ in export_results if ok)
+        def _do_export():
+            export_results = export_cropped_images(
+                results, output_dir=Path(output_dir), jpeg_quality=quality, max_dimension=max_dim,
+                watermark=watermark,
+                on_progress=lambda c, t: self.after(0, lambda: self._update_progress(c, t, f"Exporting {c}/{t}...")),
+            )
+            success = sum(1 for _, ok, _ in export_results if ok)
+            self.after(0, lambda: self._export_done(success, output_dir))
+
+        threading.Thread(target=_do_export, daemon=True).start()
+
+    def _export_done(self, success: int, output_dir: str):
+        self._export_top_btn.configure(state="normal")
         self._status_var.set(f"Exported {success} images")
-
         if success > 0:
             if messagebox.askyesno("Export Complete", f"Exported {success} images to:\n{output_dir}\n\nOpen folder?"):
                 if sys.platform == "win32":

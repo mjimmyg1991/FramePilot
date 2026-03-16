@@ -14,6 +14,7 @@ from .crop_calculator import (
     calculate_crop_for_detection,
     select_primary_subject,
 )
+from .constants import SUPPORTED_EXTENSIONS
 from .detector import Detection, SubjectDetector
 from .xmp_handler import get_xmp_path, write_crop_to_xmp
 
@@ -24,12 +25,6 @@ app = typer.Typer(
 )
 console = Console()
 
-# Supported image extensions
-SUPPORTED_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".tif", ".tiff",
-    ".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf"
-}
-
 
 def parse_aspect_ratio(value: str) -> tuple[int, int]:
     """Parse aspect ratio string like '4:5' or '9:16'."""
@@ -37,10 +32,13 @@ def parse_aspect_ratio(value: str) -> tuple[int, int]:
         parts = value.split(":")
         if len(parts) != 2:
             raise ValueError
-        return (int(parts[0]), int(parts[1]))
+        w, h = int(parts[0]), int(parts[1])
+        if w <= 0 or h <= 0:
+            raise ValueError
+        return (w, h)
     except (ValueError, IndexError):
         raise typer.BadParameter(
-            f"Invalid aspect ratio '{value}'. Use format like '4:5' or '9:16'"
+            f"Invalid aspect ratio '{value}'. Use format like '4:5' or '9:16' (positive integers only)"
         )
 
 

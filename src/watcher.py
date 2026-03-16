@@ -10,16 +10,12 @@ from typing import Callable
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
 from watchdog.observers import Observer
 
+from .constants import SUPPORTED_EXTENSIONS
 from .crop_calculator import CropRegion, calculate_crop_for_detection, select_primary_subject
 from .detector import SubjectDetector
 from .xmp_handler import write_crop_to_xmp
 
 logger = logging.getLogger(__name__)
-
-SUPPORTED_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".tif", ".tiff",
-    ".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf",
-}
 
 
 @dataclass

@@ -10,23 +10,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from ..crop_calculator import CropRegion
-
-
-# Brand colors (matching main_window.py)
-BRAND_COLORS = {
-    "orange": "#FF6B35",
-    "orange_dim": "#E55A2B",
-    "bg_primary": "#0A0A0B",
-    "bg_secondary": "#111113",
-    "bg_tertiary": "#1A1A1D",
-    "bg_card": "#151517",
-    "border": "#2A2A2E",
-    "text_primary": "#FFFFFF",
-    "text_secondary": "#A0A0A5",
-    "text_dim": "#6B6B70",
-    "success": "#22C55E",
-    "error": "#EF4444",
-}
+from ..constants import BRAND_COLORS
 
 
 @dataclass
@@ -68,6 +52,7 @@ class ThumbnailGrid(ctk.CTkScrollableFrame):
         self._load_queue: queue.Queue = queue.Queue()
         self._active_loaders = 0
         self._loader_lock = threading.Lock()
+        self._items_lock = threading.Lock()
         self._pending_rebuild = False
 
         # Configure grid columns
@@ -80,19 +65,20 @@ class ThumbnailGrid(ctk.CTkScrollableFrame):
         Args:
             items: List of queue item dicts with 'path', 'status', 'result', 'crop_override' keys
         """
-        self._items = []
-        for item in items:
-            result = item.get("result")
-            crop = item.get("crop_override")
-            if crop is None and result is not None:
-                crop = result.crop
+        with self._items_lock:
+            self._items = []
+            for item in items:
+                result = item.get("result")
+                crop = item.get("crop_override")
+                if crop is None and result is not None:
+                    crop = result.crop
 
-            self._items.append(ThumbnailItem(
-                path=item["path"],
-                crop=crop,
-                status=item["status"],
-                excluded=item.get("excluded", False)
-            ))
+                self._items.append(ThumbnailItem(
+                    path=item["path"],
+                    crop=crop,
+                    status=item["status"],
+                    excluded=item.get("excluded", False)
+                ))
 
         self._rebuild_grid()
         # Only load thumbnails for items that have crops (processed)
@@ -100,7 +86,9 @@ class ThumbnailGrid(ctk.CTkScrollableFrame):
 
     def update_item(self, index: int, item: dict[str, Any]) -> None:
         """Update a single item (e.g., after processing)."""
-        if 0 <= index < len(self._items):
+        with self._items_lock:
+            if not (0 <= index < len(self._items)):
+                return
             result = item.get("result")
             crop = item.get("crop_override")
             if crop is None and result is not None:
@@ -139,7 +127,8 @@ class ThumbnailGrid(ctk.CTkScrollableFrame):
 
     def clear(self) -> None:
         """Clear all items."""
-        self._items.clear()
+        with self._items_lock:
+            self._items.clear()
         self._selected_index = -1
         for frame in self._thumbnail_frames:
             frame.destroy()
@@ -347,20 +336,23 @@ class ThumbnailGrid(ctk.CTkScrollableFrame):
                     self._active_loaders -= 1
                 return
 
-            if index >= len(self._items):
-                continue
+            with self._items_lock:
+                if index >= len(self._items):
+                    continue
+                item = self._items[index]
+                item_path = item.path
+                item_crop = item.crop
 
             try:
-                item = self._items[index]
-                img = Image.open(item.path)
+                img = Image.open(item_path)
 
                 # Apply crop if available (show cropped preview)
-                if item.crop:
+                if item_crop:
                     w, h = img.size
-                    left = int(item.crop.left * w)
-                    top = int(item.crop.top * h)
-                    right = int(item.crop.right * w)
-                    bottom = int(item.crop.bottom * h)
+                    left = int(item_crop.left * w)
+                    top = int(item_crop.top * h)
+                    right = int(item_crop.right * w)
+                    bottom = int(item_crop.bottom * h)
                     img = img.crop((left, top, right, bottom))
 
                 # Resize to fit thumbnail (maintain aspect ratio)
