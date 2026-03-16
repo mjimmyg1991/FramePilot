@@ -7,9 +7,13 @@ from pathlib import Path
 
 # In frozen exe, redirect stderr to a log file for debugging
 if getattr(sys, "frozen", False):
-    log_path = Path(sys.executable).parent / "framepilot.log"
+    if sys.platform == "darwin":
+        log_dir = Path.home() / "Library" / "Logs" / "FramePilot"
+    else:
+        log_dir = Path(sys.executable).parent
     try:
-        log_file = open(log_path, "w")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_dir / "framepilot.log", "w")
         sys.stdout = log_file
         sys.stderr = log_file
     except Exception:
@@ -33,5 +37,10 @@ except Exception as e:
     traceback.print_exc()
     if getattr(sys, "frozen", False):
         # Also write to a guaranteed location
-        with open(Path(sys.executable).parent / "crash.log", "w") as f:
+        if sys.platform == "darwin":
+            crash_dir = Path.home() / "Library" / "Logs" / "FramePilot"
+        else:
+            crash_dir = Path(sys.executable).parent
+        crash_dir.mkdir(parents=True, exist_ok=True)
+        with open(crash_dir / "crash.log", "w") as f:
             traceback.print_exc(file=f)

@@ -14,6 +14,7 @@ from .crop_calculator import (
     calculate_crop_for_detection,
     select_primary_subject,
 )
+from .constants import SUPPORTED_EXTENSIONS
 from .detector import Detection, SubjectDetector
 from .xmp_handler import get_xmp_path, write_crop_to_xmp
 
@@ -24,12 +25,6 @@ app = typer.Typer(
 )
 console = Console()
 
-# Supported image extensions
-SUPPORTED_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".tif", ".tiff",
-    ".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf"
-}
-
 
 def parse_aspect_ratio(value: str) -> tuple[int, int]:
     """Parse aspect ratio string like '4:5' or '9:16'."""
@@ -37,10 +32,13 @@ def parse_aspect_ratio(value: str) -> tuple[int, int]:
         parts = value.split(":")
         if len(parts) != 2:
             raise ValueError
-        return (int(parts[0]), int(parts[1]))
+        w, h = int(parts[0]), int(parts[1])
+        if w <= 0 or h <= 0:
+            raise ValueError
+        return (w, h)
     except (ValueError, IndexError):
         raise typer.BadParameter(
-            f"Invalid aspect ratio '{value}'. Use format like '4:5' or '9:16'"
+            f"Invalid aspect ratio '{value}'. Use format like '4:5' or '9:16' (positive integers only)"
         )
 
 
@@ -213,14 +211,15 @@ def process(
                             f"primary: {primary.label} ({primary.confidence:.2f})"
                         )
 
-                    # Get image dimensions
-                    image = cv2.imread(str(image_path))
-                    if image is None:
-                        result["status"] = "error"
-                        result["error"] = "Failed to load image"
-                    else:
-                        height, width = image.shape[:2]
+                    # Get image dimensions without full decode
+                    from PIL import Image as PILImage
+                    with PILImage.open(image_path) as img:
+                        width, height = img.size
 
+                    if width == 0 or height == 0:
+                        result["status"] = "error"
+                        result["error"] = "Invalid image dimensions"
+                    else:
                         # Calculate crop
                         crop = calculate_crop_for_detection(
                             primary,
@@ -300,6 +299,65 @@ def process(
 
     if dry_run:
         console.print("\n[cyan]Dry run complete. No files were written.[/cyan]")
+
+
+@app.command()
+def watch(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Directory to watch for new images")
+    ],
+    aspect_ratio: Annotated[
+        str,
+        typer.Option("--aspect-ratio", "-a", help="Target aspect ratio (e.g., 4:5, 9:16)")
+    ] = "4:5",
+    padding: Annotated[
+        float,
+        typer.Option("--padding", "-p", help="Padding around subject (0.0-1.0)")
+    ] = 0.15,
+    detection_strategy: Annotated[
+        str,
+        typer.Option("--strategy", "-s", help="Subject selection: largest, centered, highest_confidence")
+    ] = "highest_confidence",
+) -> None:
+    """Watch a folder for new images and auto-generate XMP crop sidecars."""
+    from .watcher import FolderWatcher, WatcherResult
+
+    target_aspect = parse_aspect_ratio(aspect_ratio)
+
+    if not path.is_dir():
+        console.print(f"[red]Not a directory: {path}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Watching [cyan]{path}[/cyan] for new images...")
+    console.print(f"Aspect ratio: [cyan]{target_aspect[0]}:{target_aspect[1]}[/cyan]  Padding: [cyan]{padding:.0%}[/cyan]")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    def on_processed(result: WatcherResult):
+        if result.status == "success":
+            console.print(f"  [green]OK[/green] {result.file_path.name} → {result.xmp_path.name}")
+        elif result.status == "no_subject":
+            console.print(f"  [yellow]SKIP[/yellow] {result.file_path.name} (no subject)")
+        else:
+            console.print(f"  [red]ERR[/red] {result.file_path.name}: {result.error_message}")
+
+    watcher = FolderWatcher(
+        watch_dir=path,
+        aspect_ratio=target_aspect,
+        padding=padding,
+        strategy=detection_strategy,
+        on_file_processed=on_processed,
+    )
+
+    try:
+        watcher.start()
+        # Block until Ctrl+C
+        import time
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print(f"\n[dim]Stopping... processed {watcher.processed_count} files.[/dim]")
+        watcher.stop()
 
 
 @app.command()

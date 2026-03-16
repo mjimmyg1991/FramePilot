@@ -1,13 +1,21 @@
-"""Scene classification using CLIP for auto-detecting shoot type."""
+"""Scene classification using CLIP for auto-detecting shoot type.
+
+Requires optional dependencies: torch, transformers.
+Install with: pip install torch transformers
+"""
 
 from pathlib import Path
 from typing import Callable
 
-import torch
-from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
-
 from .presets import SHOOT_TYPES, ShootTypePreset
+
+try:
+    import torch
+    from PIL import Image
+    from transformers import CLIPModel, CLIPProcessor
+    _CLIP_AVAILABLE = True
+except ImportError:
+    _CLIP_AVAILABLE = False
 
 
 class SceneClassifier:
@@ -47,8 +55,13 @@ class SceneClassifier:
 
     def __init__(self):
         """Initialize the classifier. Model loaded lazily on first use."""
-        self._model: CLIPModel | None = None
-        self._processor: CLIPProcessor | None = None
+        if not _CLIP_AVAILABLE:
+            raise ImportError(
+                "Scene classification requires 'torch' and 'transformers'. "
+                "Install with: pip install torch transformers"
+            )
+        self._model = None
+        self._processor = None
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
     def _load_model(self):

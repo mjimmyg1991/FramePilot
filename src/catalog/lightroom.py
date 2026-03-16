@@ -58,7 +58,7 @@ class CatalogCollection:
 
 
 class LightroomCatalog:
-    """Read-only interface to a Lightroom Classic catalog."""
+    """Interface to a Lightroom Classic catalog."""
 
     def __init__(self, catalog_path: str | Path):
         """Open a Lightroom catalog.
@@ -74,6 +74,7 @@ class LightroomCatalog:
             raise ValueError(f"Not a Lightroom catalog: {catalog_path}")
 
         self._conn: sqlite3.Connection | None = None
+        self._readonly: bool = True
 
     def __enter__(self):
         self.open()
@@ -82,11 +83,18 @@ class LightroomCatalog:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def open(self):
-        """Open the database connection."""
-        # Open in read-only mode with URI
-        uri = f"file:{self.catalog_path}?mode=ro"
-        self._conn = sqlite3.connect(uri, uri=True)
+    def open(self, readonly: bool = True):
+        """Open the database connection.
+
+        Args:
+            readonly: If True, open in read-only mode. Set to False for write operations.
+        """
+        self._readonly = readonly
+        if readonly:
+            uri = f"file:{self.catalog_path}?mode=ro"
+            self._conn = sqlite3.connect(uri, uri=True)
+        else:
+            self._conn = sqlite3.connect(str(self.catalog_path))
         self._conn.row_factory = sqlite3.Row
 
     def close(self):
@@ -314,6 +322,102 @@ class LightroomCatalog:
         cursor = self.conn.execute(query, (filename_pattern,))
         return self._rows_to_images(cursor)
 
+    def get_image_id_by_path(self, file_path: Path) -> int | None:
+        """Look up a catalog image ID by its file path.
+
+        Args:
+            file_path: Full path to the image file
+
+        Returns:
+            The image id_local, or None if not found
+        """
+        folder_path = str(file_path.parent).rstrip("/\\")
+        basename = file_path.stem
+
+        query = """
+            SELECT i.id_local as id
+            FROM Adobe_images i
+            JOIN AgLibraryFile fi ON i.rootFile = fi.id_local
+            JOIN AgLibraryFolder fo ON fi.folder = fo.id_local
+            JOIN AgLibraryRootFolder r ON fo.rootFolder = r.id_local
+            WHERE fi.baseName = ?
+            AND (r.absolutePath || fo.pathFromRoot) LIKE ?
+            LIMIT 1
+        """
+        cursor = self.conn.execute(query, (basename, f"%{folder_path}%"))
+        row = cursor.fetchone()
+        return row["id"] if row else None
+
+    def create_collection(self, name: str) -> int:
+        """Create a new collection in the catalog.
+
+        Requires the catalog to be opened in write mode (readonly=False).
+        Lightroom must NOT be running or the database will be locked.
+
+        Args:
+            name: Name for the new collection
+
+        Returns:
+            The id_local of the new collection
+
+        Raises:
+            RuntimeError: If the catalog is opened in read-only mode
+        """
+        if self._readonly:
+            raise RuntimeError("Catalog opened in read-only mode. Use open(readonly=False) for write operations.")
+
+        # Get the next available id
+        cursor = self.conn.execute("SELECT MAX(id_local) as max_id FROM AgLibraryCollection")
+        row = cursor.fetchone()
+        next_id = (row["max_id"] or 0) + 1
+
+        self.conn.execute(
+            """INSERT INTO AgLibraryCollection
+               (id_local, name, creationId, systemOnly)
+               VALUES (?, ?, 'com.adobe.ag.library.collection', 0)""",
+            (next_id, name),
+        )
+        self.conn.commit()
+        return next_id
+
+    def add_images_to_collection(self, collection_id: int, image_ids: list[int]) -> int:
+        """Add images to an existing collection.
+
+        Args:
+            collection_id: The collection id_local
+            image_ids: List of image id_local values to add
+
+        Returns:
+            Number of images successfully added
+        """
+        if self._readonly:
+            raise RuntimeError("Catalog opened in read-only mode.")
+
+        added = 0
+        # Get current max position
+        cursor = self.conn.execute(
+            "SELECT MAX(positionInCollection) as max_pos FROM AgLibraryCollectionImage WHERE collection = ?",
+            (collection_id,),
+        )
+        row = cursor.fetchone()
+        position = (row["max_pos"] or 0) + 1
+
+        for image_id in image_ids:
+            try:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO AgLibraryCollectionImage
+                       (collection, image, positionInCollection)
+                       VALUES (?, ?, ?)""",
+                    (collection_id, image_id, position),
+                )
+                position += 1
+                added += 1
+            except sqlite3.IntegrityError:
+                continue
+
+        self.conn.commit()
+        return added
+
     def _rows_to_images(self, cursor) -> list[CatalogImage]:
         """Convert database rows to CatalogImage objects."""
         images = []
@@ -328,6 +432,35 @@ class LightroomCatalog:
                 color_label=row["colorLabels"] or "",
             ))
         return images
+
+
+def is_catalog_locked(catalog_path: str | Path) -> bool:
+    """Check if a Lightroom catalog is locked by another process.
+
+    Args:
+        catalog_path: Path to the .lrcat file
+
+    Returns:
+        True if the catalog appears to be locked
+    """
+    catalog_path = Path(catalog_path)
+    lock_file = catalog_path.with_suffix(".lrcat.lock")
+    if lock_file.exists():
+        return True
+
+    # Also check for WAL lock
+    wal_file = catalog_path.with_suffix(".lrcat-wal")
+    if wal_file.exists():
+        try:
+            conn = sqlite3.connect(str(catalog_path), timeout=1)
+            conn.execute("BEGIN EXCLUSIVE")
+            conn.rollback()
+            conn.close()
+            return False
+        except sqlite3.OperationalError:
+            return True
+
+    return False
 
 
 def find_lightroom_catalogs() -> list[Path]:

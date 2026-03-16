@@ -8,6 +8,7 @@ from typing import Callable
 import customtkinter as ctk
 
 from ..catalog.lightroom import LightroomCatalog, find_lightroom_catalogs, CatalogImage
+from ..catalog.lightroom_prefs import find_active_catalog
 from ..catalog.darktable import DarktableCatalog, find_darktable_database
 from ..catalog.capture_one import CaptureOneCatalog, find_capture_one_catalogs
 
@@ -29,11 +30,18 @@ BRAND_COLORS = {
 class CatalogBrowserDialog(ctk.CTkToplevel):
     """Dialog for browsing and importing images from photo catalogs."""
 
-    def __init__(self, parent, on_import: Callable[[list[Path]], None]):
+    def __init__(
+        self,
+        parent,
+        on_import: Callable[[list[Path]], None] | None = None,
+        on_import_with_ids: Callable[[list[Path], dict[Path, int], Path | None], None] | None = None,
+    ):
         super().__init__(parent)
 
         self.on_import = on_import
+        self.on_import_with_ids = on_import_with_ids
         self.result: list[Path] = []
+        self.catalog_path: Path | None = None
 
         self._catalog = None
         self._catalog_type = None
@@ -169,11 +177,22 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
         self._status_label.pack(side="left")
 
     def _auto_detect_catalogs(self):
-        """Auto-detect available catalogs."""
+        """Auto-detect available catalogs, preferring the active Lightroom catalog."""
         catalogs = []
+        active_catalog: Path | None = None
+
+        # Check for active Lightroom catalog first
+        try:
+            active_catalog = find_active_catalog()
+        except Exception:
+            pass
 
         # Find Lightroom catalogs
-        for cat in find_lightroom_catalogs():
+        lr_catalogs = find_lightroom_catalogs()
+        # Put active catalog first if found
+        if active_catalog and active_catalog not in lr_catalogs:
+            lr_catalogs.insert(0, active_catalog)
+        for cat in lr_catalogs:
             catalogs.append(("Lightroom", cat))
 
         # Find darktable database
@@ -188,12 +207,26 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
         if catalogs:
             values = ["Select a catalog..."]
             self._detected_catalogs = {"Select a catalog...": None}
+            auto_select_label = None
+
             for app, path in catalogs:
-                label = f"[{app}] {path.name}"
+                is_active = active_catalog and path == active_catalog
+                suffix = " (Active)" if is_active else ""
+                label = f"[{app}] {path.name}{suffix}"
                 values.append(label)
                 self._detected_catalogs[label] = (app, path)
+                if is_active:
+                    auto_select_label = label
+
             self._catalog_dropdown.configure(values=values)
-            self._status_label.configure(text=f"Found {len(catalogs)} catalog(s)")
+
+            # Auto-select and auto-load the active catalog
+            if auto_select_label:
+                self._catalog_var.set(auto_select_label)
+                self._on_catalog_select(auto_select_label)
+                self._status_label.configure(text=f"Auto-loaded active catalog ({len(catalogs)} found)")
+            else:
+                self._status_label.configure(text=f"Found {len(catalogs)} catalog(s)")
         else:
             self._status_label.configure(text="No catalogs found. Use Browse to select one.")
             self._detected_catalogs = {}
@@ -237,14 +270,17 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
                 self._catalog = LightroomCatalog(path)
                 self._catalog.open()
                 self._catalog_type = "Lightroom"
+                self.catalog_path = path
             elif app_type == "darktable":
                 self._catalog = DarktableCatalog(path)
                 self._catalog.open()
                 self._catalog_type = "darktable"
+                self.catalog_path = path
             elif app_type == "Capture One":
                 self._catalog = CaptureOneCatalog(path)
                 self._catalog.open()
                 self._catalog_type = "Capture One"
+                self.catalog_path = path
 
             self._populate_sources()
             self._status_label.configure(text=f"Opened {app_type} catalog: {path.name}")
@@ -422,7 +458,9 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
             cb.grid(row=i, column=0, padx=8, pady=2, sticky="w")
 
             if exists:
-                self._image_checkboxes.append((cb, var, path))
+                # Store catalog image ID alongside path for collection support
+                image_id = img.id if hasattr(img, "id") else None
+                self._image_checkboxes.append((cb, var, path, image_id))
                 valid_count += 1
 
         if valid_count < len(images):
@@ -437,24 +475,37 @@ class CatalogBrowserDialog(ctk.CTkToplevel):
     def _toggle_select_all(self):
         """Toggle select all checkboxes."""
         select = self._select_all_var.get()
-        for cb, var, path in self._image_checkboxes:
+        for cb, var, path, *_ in self._image_checkboxes:
             var.set(select)
         self._update_import_count()
 
     def _update_import_count(self):
         """Update the import button with selected count."""
-        count = sum(1 for _, var, _ in self._image_checkboxes if var.get())
+        count = sum(1 for _, var, *_ in self._image_checkboxes if var.get())
         self._import_btn.configure(
             text=f"Import Selected ({count})",
             state="normal" if count > 0 else "disabled"
         )
 
     def _do_import(self):
-        """Import selected images."""
-        selected_paths = [path for _, var, path in self._image_checkboxes if var.get()]
+        """Import selected images, passing image IDs for collection support."""
+        selected_paths = []
+        image_ids: dict[Path, int] = {}
+
+        for _, var, path, *rest in self._image_checkboxes:
+            if var.get():
+                selected_paths.append(path)
+                image_id = rest[0] if rest else None
+                if image_id is not None:
+                    image_ids[path] = image_id
+
         if selected_paths:
             self.result = selected_paths
-            self.on_import(selected_paths)
+            # Use extended callback if available
+            if self.on_import_with_ids:
+                self.on_import_with_ids(selected_paths, image_ids, self.catalog_path)
+            elif self.on_import:
+                self.on_import(selected_paths)
             self.destroy()
 
     def destroy(self):
