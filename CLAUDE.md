@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (21 tests)
+# Run tests (72 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -26,6 +26,9 @@ pytest tests/test_crop_calculator.py -v
 
 # Dry run (no files written)
 python -m src.main process <path> --dry-run
+
+# Lightroom Classic plugin engine (normally run by the plugin)
+python engine.py <job.json> <result.tsv>
 ```
 
 ---
@@ -35,6 +38,7 @@ python -m src.main process <path> --dry-run
 ```
 lightroom-subject-crop/
 ├── app.py                          # GUI entry point
+├── engine.py                       # Headless engine entry for the LrC plugin
 ├── requirements.txt                # Dependencies
 ├── config/default_config.yaml      # Default settings
 │
@@ -45,6 +49,7 @@ lightroom-subject-crop/
 │   ├── xmp_handler.py              # XMP sidecar read/write
 │   ├── presets.py                  # Shoot types, destinations, strategies
 │   ├── scene_classifier.py         # CLIP-based auto-detect
+│   ├── lrc_bridge.py               # LrC plugin job processing + orientation mapping
 │   │
 │   ├── gui/
 │   │   ├── main_window.py          # Main CustomTkinter window
@@ -58,8 +63,17 @@ lightroom-subject-crop/
 │       ├── darktable.py            # darktable library.db reader
 │       └── capture_one.py          # Capture One .cocatalog reader
 │
+├── lightroom/
+│   └── FramePilot.lrplugin/        # Lightroom Classic plugin (Lua 5.1)
+│       ├── Info.lua                # Plugin manifest + menu items
+│       ├── FramePilotAutoCrop.lua  # Dialog, render, run engine, apply crops
+│       ├── FramePilotCore.lua      # Pure helpers (JSON, results, commands)
+│       └── PluginInfoProvider.lua  # Plug-in Manager engine settings
+│
 └── tests/
-    └── test_crop_calculator.py     # Unit tests
+    ├── test_crop_calculator.py     # Crop math tests
+    ├── test_lrc_bridge.py          # Engine + orientation mapping tests
+    └── test_lrc_plugin.py          # Plugin Lua tests (lupa, fake LrC SDK)
 ```
 
 ### Key Data Flow
@@ -68,6 +82,16 @@ lightroom-subject-crop/
 2. **Subject Selection**: `crop_calculator.py` → picks primary subject via strategy (highest_confidence/largest/centered)
 3. **Crop Calculation**: `crop_calculator.py` → calculates `CropRegion` with padding, clamped to image bounds
 4. **Output**: `xmp_handler.py` → writes XMP sidecar OR `worker.py` → exports cropped JPEG
+
+### Lightroom Classic Plugin Flow
+
+1. **Plugin** (`lightroom/FramePilot.lrplugin`) renders selected photos to 2048px JPEGs via `LrExportSession` (edits applied, orientation baked in)
+2. Writes `job.json` (rendition path, develop `orientation`, current crop) and runs the engine via `LrTasks.execute`
+3. **Engine** (`engine.py` → `src/lrc_bridge.py`) detects subjects, computes the crop inside the current crop, and maps it to develop coordinates (unrotated stored pixels)
+4. Writes tab-separated results; plugin applies them with `photo:applyDevelopSettings` inside `catalog:withWriteAccessDo`
+- **Engine lookup**: Plug-in Manager setting → `framepilot-engine(.exe)` next to the plugin folder → `../engine.py` in a source checkout
+- **Skipped**: videos and photos with a non-zero `CropAngle` (rotated crops aren't axis-aligned)
+- **Lua 5.1 only** (Lightroom's embedded Lua): no `goto`, no integer division
 
 ### GUI Architecture
 
@@ -129,7 +153,7 @@ lightroom-subject-crop/
 
 ### When Optimizing or Refactoring
 1. **Always verify the build passes before presenting changes**
-2. Run `pytest tests/ -v` and confirm all 21 tests pass
+2. Run `pytest tests/ -v` and confirm all tests pass
 3. Launch GUI with `python app.py` to verify no import/runtime errors
 4. Check for any new linter warnings
 
@@ -170,7 +194,7 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **21 tests passing** - Core crop logic well-tested
+- **72 tests passing** - Crop logic, LrC engine and plugin Lua covered
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list
 

@@ -29,6 +29,29 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Lightroom Classic plugin
+
+Crop photos without leaving Lightroom Classic: select photos, run the plugin, and the crop is applied to them in the catalog.
+
+**Install**
+1. Unzip the FramePilot Windows build. It contains `FramePilot.lrplugin` next to `framepilot-engine.exe`, so keep them together.
+2. In Lightroom Classic, open **File > Plug-in Manager**, click **Add**, and choose the `FramePilot.lrplugin` folder.
+
+When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead. The plugin finds `engine.py` in the repository, and runs it with `python` (`python3` on macOS) unless you set another interpreter in Plug-in Manager.
+
+**Use**
+1. Select photos in the Library grid or filmstrip. A collection works well as a queue.
+2. Choose **Library > Plug-in Extras > Auto-crop Selected Photos...** (or **File > Plug-in Extras** in any module).
+3. Pick the aspect ratio and subject mode, then click **Crop**.
+
+**Behavior**
+- Photos are rendered with your edits, so RAW files and rotated photos work.
+- If a photo is already cropped, the new crop stays inside the current crop. Reset the crop first to use the whole frame.
+- The crop is locked to the chosen aspect ratio, so dragging it in the Crop tool keeps the shape.
+- Each crop is a normal develop history step: undo it with **Edit > Undo** or adjust it with the Crop tool.
+- To keep the original framing, create virtual copies first and crop those.
+- Photos with a straightened or rotated crop (a non-zero crop angle) and videos are skipped and listed in the summary.
+
 ### Desktop GUI
 
 Launch the graphical interface:
