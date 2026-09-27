@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (72 tests)
+# Run tests (138 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -80,7 +80,7 @@ lightroom-subject-crop/
 
 1. **Detection**: `detector.py` → YOLOv8m-seg detects persons with segmentation masks → returns `Detection` objects with tight bboxes derived from masks
 2. **Subject Selection**: `crop_calculator.py` → picks primary subject via strategy (highest_confidence/largest/centered)
-3. **Crop Calculation**: `crop_calculator.py` → calculates `CropRegion` with padding, clamped to image bounds
+3. **Crop Calculation**: `crop_calculator.py` → sizes the `CropRegion` to fit subject + padding (never below `MIN_CROP_SCALE` of the largest fitting crop; `min_scale=1.0` = full height), spare height mostly below the subject (`HEADROOM_SHARE`), clamped to image bounds
 4. **Output**: `xmp_handler.py` → writes XMP sidecar OR `worker.py` → exports cropped JPEG
 
 ### Lightroom Classic Plugin Flow
@@ -194,7 +194,7 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **72 tests passing** - Crop logic, LrC engine and plugin Lua covered
+- **138 tests passing** - Crop logic, LrC engine and plugin Lua covered
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list
 

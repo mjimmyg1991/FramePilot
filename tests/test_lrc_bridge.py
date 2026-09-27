@@ -97,7 +97,7 @@ class TestProcessItem:
         detector = FakeDetector([make_person((0.45, 0.2, 0.55, 0.9))])
         item = LrcJobItem(id="1", path=path)
 
-        result = process_item(item, detector, LrcJobSettings(aspect_ratio=(4, 5)))
+        result = process_item(item, detector, LrcJobSettings(aspect_ratio=(4, 5), min_scale=1.0))
 
         assert result.status == "success"
         crop = result.crop
@@ -116,6 +116,18 @@ class TestProcessItem:
         path = tmp_path / "missing.jpg"
         result = process_item(LrcJobItem(id="1", path=path), FakeDetector([]), LrcJobSettings())
         assert result.status == "error"
+
+    def test_padding_and_min_scale_zoom_in(self, tmp_path):
+        path = write_jpeg(tmp_path / "a.jpg", 600, 400)
+        detector = FakeDetector([make_person((0.45, 0.4, 0.55, 0.6))])
+        item = LrcJobItem(id="1", path=path)
+
+        zoomed = process_item(item, detector, LrcJobSettings(padding=0.15)).crop
+        widest = process_item(item, detector, LrcJobSettings(padding=0.15, min_scale=1.0)).crop
+
+        assert zoomed.height == pytest.approx(0.5, abs=1e-5)
+        assert widest.height == pytest.approx(1.0)
+        assert zoomed.top < 0.4 < 0.6 < zoomed.bottom
 
     def test_crop_stays_inside_existing_crop(self, tmp_path):
         # Rendition shows only the right half of the stored image
@@ -137,7 +149,7 @@ class TestProcessItem:
         detector = FakeDetector([make_person((0.0, 0.2, 0.1, 0.9))])
         item = LrcJobItem(id="1", path=path, orientation="BC")
 
-        result = process_item(item, detector, LrcJobSettings(aspect_ratio=(4, 5)))
+        result = process_item(item, detector, LrcJobSettings(aspect_ratio=(4, 5), min_scale=1.0))
 
         crop = result.crop
         # A full-height displayed strip at the left becomes a full-width
@@ -184,6 +196,16 @@ class TestRunJob:
         left, top, right, bottom = (float(v) for v in rows[0][2:6])
         assert (right - left) * 600 / ((bottom - top) * 400) == pytest.approx(9 / 16, abs=1e-3)
 
+    def test_load_job_reads_framing(self, tmp_path):
+        job_path = tmp_path / "job.json"
+        job = {"settings": {"padding": 0.35, "min_scale": 1.0}, "photos": []}
+        job_path.write_text(json.dumps(job), encoding="utf-8")
+
+        settings, _ = load_job(job_path)
+
+        assert settings.padding == pytest.approx(0.35)
+        assert settings.min_scale == pytest.approx(1.0)
+
     def test_load_job_defaults(self, tmp_path):
         job_path = tmp_path / "job.json"
         job_path.write_text(json.dumps({"photos": [{"id": 3, "path": "x.jpg"}]}), encoding="utf-8")
@@ -192,6 +214,8 @@ class TestRunJob:
 
         assert settings.aspect_ratio == (4, 5)
         assert settings.strategy == "highest_confidence"
+        assert settings.padding == pytest.approx(0.15)
+        assert settings.min_scale == pytest.approx(0.5)
         assert items[0].id == "3"
         assert items[0].orientation == "AB"
         assert as_tuple(items[0].current_crop) == (0.0, 0.0, 1.0, 1.0)

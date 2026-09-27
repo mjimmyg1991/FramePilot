@@ -15,7 +15,12 @@ from typing import Protocol
 
 import cv2
 
-from .crop_calculator import CropRegion, calculate_crop_for_detection, select_primary_subject
+from .crop_calculator import (
+    MIN_CROP_SCALE,
+    CropRegion,
+    calculate_crop_for_detection,
+    select_primary_subject,
+)
 from .detector import Detection, SubjectDetector
 
 
@@ -53,6 +58,7 @@ class LrcJobSettings:
 
     aspect_ratio: tuple[int, int] = (4, 5)
     padding: float = 0.15
+    min_scale: float = MIN_CROP_SCALE
     strategy: str = "highest_confidence"
     precise: bool = False
 
@@ -183,7 +189,7 @@ def process_item(
     Args:
         item: Job item describing the rendition and the photo's current state
         detector: Subject detector
-        settings: Aspect ratio, padding and subject strategy
+        settings: Aspect ratio, padding, minimum crop size and subject strategy
 
     Returns:
         LrcJobResult with the crop in develop coordinates on success
@@ -204,6 +210,7 @@ def process_item(
         image_height=height,
         target_aspect=settings.aspect_ratio,
         padding=settings.padding,
+        min_scale=settings.min_scale,
     )
 
     visible = original_to_display(item.current_crop, item.orientation)
@@ -246,6 +253,7 @@ def load_job(job_path: str | Path) -> tuple[LrcJobSettings, list[LrcJobItem]]:
     settings = LrcJobSettings(
         aspect_ratio=_parse_aspect_ratio(raw_settings.get("aspect_ratio", "4:5")),
         padding=float(raw_settings.get("padding", 0.15)),
+        min_scale=float(raw_settings.get("min_scale", MIN_CROP_SCALE)),
         strategy=strategy,
         precise=bool(raw_settings.get("precise", False)),
     )

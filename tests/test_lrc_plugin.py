@@ -127,6 +127,23 @@ class TestCoreCommand:
         assert command == "'python3' '/Users/o'\\''neil/engine.py' > '/tmp/log' 2>&1"
 
 
+class TestCoreFraming:
+    """Tests for the framing presets sent to the engine."""
+
+    def test_known_framing(self, core):
+        framing = core.framing("widest")
+        assert framing.min_scale == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("value", [None, "", "huge"])
+    def test_unknown_framing_is_balanced(self, core, value):
+        assert core.framing(value).value == "balanced"
+
+    def test_framings_zoom_in_order(self, core):
+        framings = lua_table_to_python(core.FRAMINGS)
+        paddings = [f["padding"] for f in framings if f["min_scale"] < 1]
+        assert paddings == sorted(paddings)
+
+
 class TestCoreDevelopSettings:
     """Tests for reading crop state from develop settings."""
 
@@ -357,8 +374,34 @@ class TestAutoCropFlow:
         job = json.loads((Path(fake.workDir) / "job.json").read_text(encoding="utf-8"))
         assert job["settings"]["aspect_ratio"] == "9:16"
         assert job["settings"]["strategy"] == "largest"
+        assert job["settings"]["padding"] == pytest.approx(0.15)
+        assert job["settings"]["min_scale"] == pytest.approx(0.5)
         assert fake.history[1] == "FramePilot 9:16"
         assert "/Apps/FramePilot/framepilot-engine" in fake.commands[1]
+
+    def test_widest_framing_keeps_full_height(self, lua, harness):
+        fake, auto_crop, subjects = harness
+        subjects["small"] = (0.48, 0.5, 0.52, 0.6)
+        fake.prefs.framing = "widest"
+        self.add_photo(lua, fake, id=1, name="small")
+
+        self.run(lua, auto_crop)
+
+        crop = lua_table_to_python(fake.applied[1])
+        assert crop["CropTop"] == pytest.approx(0.0)
+        assert crop["CropBottom"] == pytest.approx(1.0)
+        assert fake.prefs.framing == "widest"
+
+    def test_default_framing_zooms_small_subject(self, lua, harness):
+        fake, auto_crop, subjects = harness
+        subjects["small"] = (0.48, 0.5, 0.52, 0.6)
+        self.add_photo(lua, fake, id=1, name="small")
+
+        self.run(lua, auto_crop)
+
+        crop = lua_table_to_python(fake.applied[1])
+        assert crop["CropBottom"] - crop["CropTop"] == pytest.approx(0.5, abs=1e-5)
+        assert crop["CropTop"] < 0.5 and crop["CropBottom"] > 0.6
 
     def test_cancelled_dialog_does_nothing(self, lua, harness):
         fake, auto_crop, _ = harness

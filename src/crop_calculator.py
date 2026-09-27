@@ -6,6 +6,10 @@ from typing import Literal
 from .detector import Detection
 
 
+MIN_CROP_SCALE = 0.5
+HEADROOM_SHARE = 1 / 3
+
+
 @dataclass
 class CropRegion:
     """Represents a crop region with normalized coordinates (0-1)."""
@@ -185,103 +189,67 @@ def select_primary_subject(
         raise ValueError(f"Unknown selection strategy: {strategy}")
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(value, high))
+
+
 def calculate_vertical_crop(
     image_width: int,
     image_height: int,
     subject_bbox: tuple[float, float, float, float],
     target_aspect: tuple[int, int] = (4, 5),
-    padding: float = 0.15
+    padding: float = 0.15,
+    min_scale: float = MIN_CROP_SCALE
 ) -> CropRegion:
-    """Calculate optimal vertical crop centered on subject.
+    """Calculate a crop of the target aspect ratio framed around the subject.
+
+    The crop is sized to fit the subject plus padding on every side, but is
+    never smaller than min_scale of the largest crop that fits the image, so
+    small or distant subjects are zoomed in on without becoming low-resolution
+    slivers. Spare vertical space goes mostly below the subject, which keeps
+    headroom modest for people.
 
     Args:
         image_width: Image width in pixels
         image_height: Image height in pixels
         subject_bbox: Subject bounding box (x1, y1, x2, y2) normalized 0-1
         target_aspect: Target aspect ratio as (width, height), e.g., (4, 5) or (9, 16)
-        padding: Padding around subject as fraction of subject width (0.15 = 15%)
+        padding: Space on each side of the subject as a fraction of its size (0.15 = 15%)
+        min_scale: Smallest crop as a fraction of the largest crop that fits
+            the image (1.0 = never zoom in)
 
     Returns:
         CropRegion with normalized coordinates
     """
-    # Calculate source and target aspect ratios
     source_aspect = image_width / image_height
     target_aspect_ratio = target_aspect[0] / target_aspect[1]
+    width_per_height = target_aspect_ratio / source_aspect
+    max_height = min(1.0, 1.0 / width_per_height)
 
-    # Get subject center and dimensions
     subj_x1, subj_y1, subj_x2, subj_y2 = subject_bbox
-    subj_center_x = (subj_x1 + subj_x2) / 2
-    subj_center_y = (subj_y1 + subj_y2) / 2
     subj_width = subj_x2 - subj_x1
     subj_height = subj_y2 - subj_y1
 
-    # For vertical crops (target is taller than wide), we typically want to:
-    # 1. Use full height (or most of it)
-    # 2. Center horizontally on the subject
+    needed_height = max(
+        subj_height * (1 + 2 * padding),
+        subj_width * (1 + 2 * padding) / width_per_height,
+        max_height * min_scale,
+    )
+    crop_height = min(needed_height, max_height)
+    crop_width = min(1.0, crop_height * width_per_height)
 
-    if target_aspect_ratio < source_aspect:
-        # Target is more vertical than source - typical case for portrait from landscape
-        # Use full height, calculate required width
-        crop_height = 1.0
-        crop_width = crop_height * target_aspect_ratio / source_aspect
+    subj_center_x = (subj_x1 + subj_x2) / 2
+    crop_left = _clamp(subj_center_x - crop_width / 2, 0.0, 1.0 - crop_width)
 
-        # Ensure crop is wide enough to include subject with padding
-        min_crop_width = subj_width * (1 + 2 * padding)
-        if crop_width < min_crop_width and min_crop_width <= 1.0:
-            # Need to zoom in (reduce height) to accommodate subject with padding
-            crop_width = min_crop_width
-            crop_height = crop_width * source_aspect / target_aspect_ratio
-            if crop_height > 1.0:
-                # Can't fit with padding, use max height
-                crop_height = 1.0
-                crop_width = crop_height * target_aspect_ratio / source_aspect
-
-        # Center horizontally on subject
-        crop_left = subj_center_x - crop_width / 2
-
-        # Clamp to image bounds
-        if crop_left < 0:
-            crop_left = 0
-        elif crop_left + crop_width > 1.0:
-            crop_left = 1.0 - crop_width
-
-        crop_right = crop_left + crop_width
-
-        # Center vertically (try to include subject)
-        crop_top = subj_center_y - crop_height / 2
-        if crop_top < 0:
-            crop_top = 0
-        elif crop_top + crop_height > 1.0:
-            crop_top = 1.0 - crop_height
-
-        crop_bottom = crop_top + crop_height
-
-    else:
-        # Target is more horizontal or same as source - unusual for this use case
-        # Use full width, calculate required height
-        crop_width = 1.0
-        crop_height = crop_width * source_aspect / target_aspect_ratio
-
-        if crop_height > 1.0:
-            crop_height = 1.0
-            crop_width = crop_height * target_aspect_ratio / source_aspect
-
-        # Center on subject vertically
-        crop_top = subj_center_y - crop_height / 2
-        if crop_top < 0:
-            crop_top = 0
-        elif crop_top + crop_height > 1.0:
-            crop_top = 1.0 - crop_height
-
-        crop_bottom = crop_top + crop_height
-        crop_left = 0.0
-        crop_right = crop_width
+    # A subject taller than the crop keeps its top (heads matter more than feet)
+    spare_height = max(0.0, crop_height - subj_height)
+    crop_top = _clamp(subj_y1 - spare_height * HEADROOM_SHARE, 0.0, 1.0 - crop_height)
 
     return CropRegion(
         left=crop_left,
-        right=crop_right,
+        right=crop_left + crop_width,
         top=crop_top,
-        bottom=crop_bottom
+        bottom=crop_top + crop_height
     )
 
 
@@ -290,7 +258,8 @@ def calculate_crop_for_detection(
     image_width: int,
     image_height: int,
     target_aspect: tuple[int, int] = (4, 5),
-    padding: float = 0.15
+    padding: float = 0.15,
+    min_scale: float = MIN_CROP_SCALE
 ) -> CropRegion:
     """Convenience function to calculate crop from a Detection object.
 
@@ -300,6 +269,7 @@ def calculate_crop_for_detection(
         image_height: Image height in pixels
         target_aspect: Target aspect ratio as (width, height)
         padding: Padding around subject
+        min_scale: Smallest crop as a fraction of the largest crop that fits
 
     Returns:
         CropRegion with normalized coordinates
@@ -309,5 +279,6 @@ def calculate_crop_for_detection(
         image_height=image_height,
         subject_bbox=detection.bbox,
         target_aspect=target_aspect,
-        padding=padding
+        padding=padding,
+        min_scale=min_scale
     )

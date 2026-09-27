@@ -42,7 +42,11 @@ When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead
 **Use**
 1. Select photos in the Library grid or filmstrip. A collection works well as a queue.
 2. Choose **Library > Plug-in Extras > Auto-crop Selected Photos...** (or **File > Plug-in Extras** in any module).
-3. Pick the aspect ratio and subject mode, then click **Crop**.
+3. Pick the aspect ratio, subject mode and framing, then click **Crop**.
+
+**Framing**
+- **Tight**, **Balanced** and **Loose** zoom in so the subject fills the crop, with a little, some or plenty of space around them. Crops never go below half the size of the largest crop that fits, so small or distant subjects don't turn into low-resolution slivers.
+- **Widest** never zooms in. It keeps the full frame height and just slides the crop to the subject.
 
 **Behavior**
 - Photos are rendered with your edits, so RAW files and rotated photos work.

@@ -15,6 +15,26 @@ Core.STRATEGIES = {
 	{ title = 'Whole Group', value = 'group' },
 }
 
+-- padding: space on each side of the subject, as a fraction of its size.
+-- min_scale: smallest crop as a fraction of the largest crop that fits; 1.0
+-- keeps the full frame height (never zooms in).
+Core.FRAMINGS = {
+	{ title = 'Tight', value = 'tight', padding = 0.08, min_scale = 0.5 },
+	{ title = 'Balanced', value = 'balanced', padding = 0.15, min_scale = 0.5 },
+	{ title = 'Loose', value = 'loose', padding = 0.35, min_scale = 0.5 },
+	{ title = 'Widest (no zoom)', value = 'widest', padding = 0.15, min_scale = 1.0 },
+}
+
+-- Returns the framing with the given value, or Balanced when unknown.
+function Core.framing(value)
+	for _, framing in ipairs(Core.FRAMINGS) do
+		if framing.value == value then
+			return framing
+		end
+	end
+	return Core.FRAMINGS[2]
+end
+
 local JSON_ESCAPES = {
 	['"'] = '\\"',
 	['\\'] = '\\\\',

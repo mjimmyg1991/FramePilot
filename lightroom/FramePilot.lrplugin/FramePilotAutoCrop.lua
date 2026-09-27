@@ -20,7 +20,6 @@ local Core = require 'FramePilotCore'
 local AutoCrop = {}
 
 local RENDITION_LONG_EDGE = 2048
-local DEFAULT_PADDING = 0.15
 local MAX_LISTED_PHOTOS = 10
 
 local function fileExists(path)
@@ -87,11 +86,16 @@ local function showSettingsDialog(prefs)
 		local props = LrBinding.makePropertyTable(context)
 		props.aspectRatio = prefs.aspectRatio or '4:5'
 		props.strategy = prefs.strategy or 'highest_confidence'
+		props.framing = Core.framing(prefs.framing).value
 		props.precise = prefs.precise or false
 
 		local aspectItems = {}
 		for _, ratio in ipairs(Core.ASPECT_RATIOS) do
 			aspectItems[#aspectItems + 1] = { title = ratio, value = ratio }
+		end
+		local framingItems = {}
+		for _, framing in ipairs(Core.FRAMINGS) do
+			framingItems[#framingItems + 1] = { title = framing.title, value = framing.value }
 		end
 
 		local labelWidth = LrView.share('framepilot_label_width')
@@ -105,6 +109,10 @@ local function showSettingsDialog(prefs)
 			f:row {
 				f:static_text { title = 'Subject:', alignment = 'right', width = labelWidth },
 				f:popup_menu { value = LrView.bind('strategy'), items = Core.STRATEGIES },
+			},
+			f:row {
+				f:static_text { title = 'Framing:', alignment = 'right', width = labelWidth },
+				f:popup_menu { value = LrView.bind('framing'), items = framingItems },
 			},
 			f:row {
 				f:static_text { title = '', width = labelWidth },
@@ -130,12 +138,15 @@ local function showSettingsDialog(prefs)
 
 		prefs.aspectRatio = props.aspectRatio
 		prefs.strategy = props.strategy
+		prefs.framing = props.framing
 		prefs.precise = props.precise
+		local framing = Core.framing(props.framing)
 		return {
 			aspect_ratio = props.aspectRatio,
 			strategy = props.strategy,
 			precise = props.precise,
-			padding = DEFAULT_PADDING,
+			padding = framing.padding,
+			min_scale = framing.min_scale,
 		}
 	end)
 end
