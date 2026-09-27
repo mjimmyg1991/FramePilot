@@ -320,7 +320,7 @@ local modules = {
     },
     LrPathUtils = {
         child = function(a, b) return a .. '/' .. b end,
-        parent = function(p) return (p:gsub('/[^/]*$', '')) end,
+        parent = function(p) return (p:gsub('[/\\][^/\\]*$', '')) end,
         getStandardFilePath = function(name)
             if name == 'appData' then return fake.appDataRoot end
             return fake.tempRoot
@@ -582,7 +582,7 @@ class TestRunLogs:
         assert "Photo 1 hero: orientation BC" in plugin_log
         assert "Cropped 1 photo to 4:5." in plugin_log
         summary = lua_table_to_python(fake.messages)[0]
-        assert f"Logs: {run_dir}" in summary["info"]
+        assert Path(summary["info"].split("Logs: ")[1]) == run_dir
 
     def test_engine_failure_names_log_folder(self, lua, harness, tmp_path):
         fake, auto_crop, _ = harness
@@ -600,7 +600,7 @@ class TestRunLogs:
         (run_dir,) = run_folders(tmp_path, "autocrop")
         message = lua_table_to_python(fake.messages)[0]
         assert message["style"] == "critical"
-        assert str(run_dir) in message["info"]
+        assert Path(message["info"].splitlines()[-1]) == run_dir
         assert (run_dir / "engine.log").read_text(encoding="utf-8") == "Traceback: model missing"
 
     def test_keeps_only_recent_runs(self, lua, harness, tmp_path):
@@ -859,7 +859,7 @@ class TestCheckSetup:
         ok, report = self.run(lua, check_setup)
 
         (run_dir,) = run_folders(tmp_path, "check")
-        assert report["Logs"] == str(run_dir)
+        assert Path(report["Logs"]) == run_dir
         assert {"check.txt", "version.txt", "job.json", "result.tsv", "engine.log"} <= {
             p.name for p in run_dir.iterdir()
         }
@@ -899,8 +899,10 @@ class TestCheckSetup:
 
         assert ok
         engine_py = PLUGIN_DIR.parent.parent / "engine.py"
-        assert report["Engine"] == f"{engine_py} (source checkout)"
-        assert state["engine"] == ["/venv/bin/python", str(engine_py)]
+        assert report["Engine"].endswith(" (source checkout)")
+        assert Path(report["Engine"].removesuffix(" (source checkout)")) == engine_py
+        assert state["engine"][0] == "/venv/bin/python"
+        assert Path(state["engine"][1]) == engine_py
 
     def test_engine_that_wont_start_fails(self, lua, harness):
         fake, check_setup, state = harness
