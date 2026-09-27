@@ -399,7 +399,9 @@ function AutoCrop.run(context)
 	if exitCode ~= 0 or not resultText then
 		LrDialogs.message(
 			'FramePilot: the crop engine failed (exit code ' .. tostring(exitCode) .. ').',
-			Core.tail(Engine.readFile(logPath), 1200) .. '\n\n' .. Engine.logNote(runDir),
+			Core.tail(Engine.readFile(logPath), 1200) .. '\n\n'
+				.. (Engine.startupHint(engineArgs) and (Engine.startupHint(engineArgs) .. '\n\n') or '')
+				.. Engine.logNote(runDir),
 			'critical'
 		)
 		return

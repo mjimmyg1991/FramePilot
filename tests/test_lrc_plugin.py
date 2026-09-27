@@ -914,6 +914,32 @@ class TestCheckSetup:
         assert "failed to start (exit code 1)" in report["Engine version"]
         assert state["jobs"] == []
 
+    def test_engine_that_wont_start_gets_mac_quarantine_hint(self, lua, harness):
+        fake, check_setup, state = harness
+        state["version_exit"] = 126
+
+        ok, report = self.run(lua, check_setup)
+
+        assert not ok
+        assert "xattr -dr com.apple.quarantine" in report["Hint"]
+        assert Path(report["Hint"].split("'")[1]) == PLUGIN_DIR.parent
+
+    def test_source_checkout_prefers_repo_venv(self, lua, harness, tmp_path):
+        fake, check_setup, state = harness
+        fake.engineExists = False
+        repo = tmp_path / "FramePilot"
+        (repo / "lightroom" / "FramePilot.lrplugin").mkdir(parents=True)
+        (repo / "engine.py").write_text("", encoding="utf-8")
+        venv_python = repo / ".venv" / "bin" / "python"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("", encoding="utf-8")
+        lua.execute(f"_PLUGIN = {{ path = [[{repo / 'lightroom' / 'FramePilot.lrplugin'}]] }}")
+
+        self.run(lua, check_setup)
+
+        assert Path(state["engine"][0]) == venv_python
+        assert Path(state["engine"][1]) == repo / "engine.py"
+
     def test_missing_test_photo_fails(self, lua, harness, tmp_path):
         fake, check_setup, state = harness
         lua.execute(f"_PLUGIN = {{ path = [[{tmp_path / 'FramePilot.lrplugin'}]] }}")

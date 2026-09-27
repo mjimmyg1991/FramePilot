@@ -30,9 +30,22 @@ function Engine.writeFile(path, text)
 	handle:close()
 end
 
-local function pythonProgram(prefs)
+-- The Python to run engine.py with: the Plug-in Manager setting, then a
+-- .venv or venv next to engine.py, then python/python3 on the PATH. Lightroom's
+-- PATH on macOS doesn't include Homebrew or pyenv, so a venv is the safer bet.
+local function pythonProgram(prefs, scriptDir)
 	if prefs.pythonPath and prefs.pythonPath ~= '' then
 		return prefs.pythonPath
+	end
+	if scriptDir then
+		for _, venv in ipairs({ '.venv', 'venv' }) do
+			local candidate = WIN_ENV
+				and LrPathUtils.child(LrPathUtils.child(LrPathUtils.child(scriptDir, venv), 'Scripts'), 'python.exe')
+				or LrPathUtils.child(LrPathUtils.child(LrPathUtils.child(scriptDir, venv), 'bin'), 'python')
+			if Engine.fileExists(candidate) then
+				return candidate
+			end
+		end
 	end
 	return WIN_ENV and 'python' or 'python3'
 end
@@ -48,7 +61,7 @@ function Engine.resolve(prefs)
 			return nil, 'The engine set in Plug-in Manager was not found:\n' .. custom
 		end
 		if custom:lower():match('%.py$') then
-			return { pythonProgram(prefs), custom, source = 'Plug-in Manager setting', path = custom }
+			return { pythonProgram(prefs, LrPathUtils.parent(custom)), custom, source = 'Plug-in Manager setting', path = custom }
 		end
 		return { custom, source = 'Plug-in Manager setting', path = custom }
 	end
@@ -62,7 +75,7 @@ function Engine.resolve(prefs)
 
 	local sourceScript = LrPathUtils.child(LrPathUtils.parent(installDir), 'engine.py')
 	if Engine.fileExists(sourceScript) then
-		return { pythonProgram(prefs), sourceScript, source = 'source checkout', path = sourceScript }
+		return { pythonProgram(prefs, LrPathUtils.parent(sourceScript)), sourceScript, source = 'source checkout', path = sourceScript }
 	end
 
 	return nil, 'Could not find the FramePilot engine.\n\n'
@@ -133,6 +146,24 @@ end
 -- Text naming the run's log folder, for dialogs.
 function Engine.logNote(runDir)
 	return 'Logs for this run (job.json, result.tsv, engine.log, plugin.log) are in:\n' .. runDir
+end
+
+-- Advice for an engine that won't start, or nil. A packaged engine unzipped
+-- from a download is quarantined by macOS, which stops it from running.
+function Engine.startupHint(engineArgs)
+	if WIN_ENV then
+		return nil
+	end
+	if engineArgs.source == 'next to the plugin' then
+		return 'macOS may be blocking the downloaded engine. In Terminal, run:\n'
+			.. "xattr -dr com.apple.quarantine '" .. LrPathUtils.parent(engineArgs.path) .. "'\n"
+			.. 'then run Check Setup again.'
+	end
+	if engineArgs.source == 'source checkout' then
+		return 'Python ' .. engineArgs[1] .. ' could not run engine.py. It needs Python 3.11+ with '
+			.. 'requirements.txt installed; create a .venv next to engine.py or set the Python path in Plug-in Manager.'
+	end
+	return nil
 end
 
 -- Runs the engine with extra arguments, sending its output to logPath.

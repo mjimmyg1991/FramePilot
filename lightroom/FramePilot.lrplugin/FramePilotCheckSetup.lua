@@ -77,6 +77,7 @@ function CheckSetup.run(context)
 	if versionExit ~= 0 then
 		lines[#lines + 1] = { 'Engine version', 'the engine failed to start (exit code ' .. tostring(versionExit) .. ')' }
 		lines[#lines + 1] = { 'Engine output', Core.tail(versionText, 1200) }
+		lines[#lines + 1] = { 'Hint', Engine.startupHint(engineArgs) }
 		progress:done()
 		showReport(false, lines, workDir)
 		return false, lines
