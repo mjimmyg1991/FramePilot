@@ -11,9 +11,9 @@ from rich.table import Table
 
 from .crop_calculator import (
     CropRegion,
-    calculate_crop_for_subject,
     frame_subject,
 )
+from .crop_candidates import rank_crops
 from .detector import Detection, SubjectDetector
 from .xmp_handler import get_xmp_path, write_crop_to_xmp
 
@@ -229,13 +229,14 @@ def process(
                         height, width = image.shape[:2]
 
                         # Calculate crop
-                        crop = calculate_crop_for_subject(
+                        crop = rank_crops(
                             choice,
-                            image_width=width,
-                            image_height=height,
+                            detections,
+                            balls=scene.balls,
+                            image_size=(width, height),
                             target_aspect=target_aspect,
                             padding=padding
-                        )
+                        )[0].crop
                         result["crop"] = crop
 
                         if verbose:

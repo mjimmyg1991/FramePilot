@@ -11,6 +11,7 @@ from src.subject_training import (
     accuracy,
     box_at_point,
     build_examples,
+    crop_report,
     cross_validate,
     cross_validated_predictions,
     fit_weights,
@@ -177,6 +178,24 @@ class TestModeReport:
         assert report["framing"] == (2, 2)
         assert report["member_recall"] == (2, 2)
         assert report["member_precision"] == (2, 2)
+
+
+class TestCropReport:
+    """Tests for counting composition problems before and after candidate ranking."""
+
+    def test_neighbour_cut_in_half_is_fixed(self):
+        lead = person((0.40, 0.3, 0.50, 0.9))
+        neighbour = person((0.60, 0.3, 0.70, 0.9))
+        names = SubjectWeights.names()
+        example = TrainingExample(name="x.jpg", features=np.zeros((2, len(names))), label_index=0,
+                                  people=[lead, neighbour], image_size=(6000, 4000))
+        weights = SubjectWeights(size=5.0)
+
+        report = crop_report([example], weights, (4, 5))
+
+        assert report["total"]["photos"] == 1
+        assert report["candidates"]["intruder"] <= report["single"]["intruder"]
+        assert report["candidates"]["head_cut"] == 0
 
 
 class TestBuildExamples:

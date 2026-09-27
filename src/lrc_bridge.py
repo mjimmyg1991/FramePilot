@@ -18,9 +18,9 @@ import cv2
 from .crop_calculator import (
     MIN_CROP_SCALE,
     CropRegion,
-    calculate_crop_for_subject,
     frame_subject,
 )
+from .crop_candidates import rank_crops
 from .detector import SceneDetections, SubjectDetector
 
 
@@ -209,14 +209,16 @@ def process_item(
         balls=scene.balls,
         image_size=(width, height),
     )
-    rendition_crop = calculate_crop_for_subject(
+    best = rank_crops(
         choice,
-        image_width=width,
-        image_height=height,
+        scene.people,
+        balls=scene.balls,
+        image_size=(width, height),
         target_aspect=settings.aspect_ratio,
         padding=settings.padding,
         min_scale=settings.min_scale,
-    )
+    )[0]
+    rendition_crop = best.crop
 
     visible = original_to_display(item.current_crop, item.orientation)
     display_crop = CropRegion(
@@ -227,7 +229,7 @@ def process_item(
     )
     develop_crop = display_to_original(display_crop, item.orientation)
     return LrcJobResult(
-        id=item.id, status="success", crop=_clamp_unit(develop_crop), message=choice.mode.value
+        id=item.id, status="success", crop=_clamp_unit(develop_crop), message=best.choice.mode.value
     )
 
 

@@ -8,7 +8,8 @@ from typing import Callable
 
 import cv2
 
-from ..crop_calculator import CropRegion, calculate_crop_for_subject, frame_subject
+from ..crop_calculator import CropRegion, frame_subject
+from ..crop_candidates import rank_crops
 from ..detector import Detection, SubjectDetector
 from ..xmp_handler import write_crop_to_xmp
 
@@ -23,6 +24,7 @@ class ProcessingResult:
     primary_detection: Detection | None = None  # Lead person, or the union box of a duel or group
     subject_mode: str = "single"
     crop: CropRegion | None = None
+    alternate_crops: list[CropRegion] = field(default_factory=list)  # Next-best crops to offer
     error_message: str = ""
     image_size: tuple[int, int] = (0, 0)  # width, height
 
@@ -163,18 +165,20 @@ class ProcessingWorker:
             choice = frame_subject(
                 detections, strategy, balls=scene.balls, image_size=(width, height)
             )
-            result.primary_detection = choice.as_detection()
-            result.subject_mode = choice.mode.value
 
             # Calculate crop
-            crop = calculate_crop_for_subject(
+            ranked = rank_crops(
                 choice,
-                image_width=width,
-                image_height=height,
+                detections,
+                balls=scene.balls,
+                image_size=(width, height),
                 target_aspect=aspect_ratio,
                 padding=padding,
             )
-            result.crop = crop
+            result.crop = ranked[0].crop
+            result.alternate_crops = [c.crop for c in ranked[1:]]
+            result.primary_detection = ranked[0].choice.as_detection()
+            result.subject_mode = ranked[0].choice.mode.value
             result.status = "success"
 
         except Exception as e:

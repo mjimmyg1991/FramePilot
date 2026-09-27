@@ -22,6 +22,16 @@ import typer
 
 from src import resource_path
 
+from .crop_calculator import CropRegion, calculate_crop_for_subject
+from .crop_candidates import (
+    LOW_HEAD_LIMIT,
+    balls_in_reach,
+    cuts_ball,
+    cuts_head,
+    crop_terms,
+    rank_crops,
+    visible_fraction,
+)
 from .detector import Detection, SubjectDetector
 from .subject_modes import SubjectMode, choose_subject
 from .subject_scoring import (
@@ -280,6 +290,57 @@ def mode_report(examples: list[TrainingExample], weights: SubjectWeights) -> dic
     }
 
 
+CROP_CHECKS = ["head_cut", "ball_cut", "intruder", "extremity", "low_head"]
+INTRUDER_VISIBLE = (0.2, 0.8)
+INTRUDER_MIN_SCALE = 0.5
+
+
+def crop_problems(crop: CropRegion, example: TrainingExample, choice, target_aspect: tuple[int, int]) -> set[str]:
+    """Composition problems in a crop (see CROP_CHECKS)."""
+    size = example.image_size or (3, 2)
+    reachable = balls_in_reach(choice, example.balls, size[0] / size[1])
+    terms = crop_terms(crop, choice, example.people, reachable, crop.height, target_aspect)
+    member_ids = {id(m) for m in choice.members}
+    problems = set()
+    if cuts_head(crop, choice):
+        problems.add("head_cut")
+    if cuts_ball(crop, reachable):
+        problems.add("ball_cut")
+    if any(INTRUDER_VISIBLE[0] < visible_fraction(p.bbox, crop) < INTRUDER_VISIBLE[1]
+           and p.height >= INTRUDER_MIN_SCALE * choice.primary.height
+           for p in example.people if id(p) not in member_ids):
+        problems.add("intruder")
+    if terms["extremity"] > 0:
+        problems.add("extremity")
+    if target_aspect[0] < target_aspect[1] and terms["low_head"] > 0:
+        problems.add("low_head")
+    return problems
+
+
+def crop_report(
+    examples: list[TrainingExample],
+    weights: SubjectWeights,
+    target_aspect: tuple[int, int],
+    padding: float = 0.15,
+) -> dict[str, dict[str, int]]:
+    """Count composition problems in the single computed crop and the best candidate.
+
+    Returns:
+        {"single": {check: count}, "candidates": {check: count}} plus "total"
+    """
+    counts = {"single": dict.fromkeys(CROP_CHECKS, 0), "candidates": dict.fromkeys(CROP_CHECKS, 0)}
+    for ex in examples:
+        size = ex.image_size or (3, 2)
+        choice = choose_subject(ex.people, ex.balls, size, weights)
+        base = calculate_crop_for_subject(choice, size[0], size[1], target_aspect, padding)
+        best = rank_crops(choice, ex.people, ex.balls, size, target_aspect, padding)[0].crop
+        for key, crop in (("single", base), ("candidates", best)):
+            for problem in crop_problems(crop, ex, choice, target_aspect):
+                counts[key][problem] += 1
+    counts["total"] = {"photos": len(examples)}
+    return counts
+
+
 def cross_validated_predictions(
     examples: list[TrainingExample],
     initial: SubjectWeights,
@@ -421,6 +482,8 @@ def evaluate(
     typer.echo("Current weights:")
     _print_summary(summarize(examples, weights))
     _print_mode_report(mode_report(examples, weights))
+    for target_aspect in ((4, 5), (9, 16)):
+        _print_crop_report(crop_report(examples, weights, target_aspect), target_aspect)
     if cross_validated:
         typer.echo("Trained on other folds, held-out photos:")
         _print_summary(summarize(examples, predictions=cross_validated_predictions(examples, weights, l2=l2)))
@@ -501,6 +564,15 @@ def _print_mode_report(report: dict) -> None:
         hits, total = report[key]
         if total:
             typer.echo(f"{name:30s} {hits:4d}/{total:<4d} {hits / total:6.1%}")
+
+
+def _print_crop_report(report: dict, target_aspect: tuple[int, int]) -> None:
+    total = report["total"]["photos"]
+    typer.echo(f"Crop problems at {target_aspect[0]}:{target_aspect[1]} "
+               f"(photos affected of {total}; single computed crop -> best candidate):")
+    for check in CROP_CHECKS:
+        before, after = report["single"][check], report["candidates"][check]
+        typer.echo(f"  {check:12s} {before:4d} -> {after:4d}")
 
 
 def _print_dataset_summary(examples: list[TrainingExample], unmatched: list[str]) -> None:
