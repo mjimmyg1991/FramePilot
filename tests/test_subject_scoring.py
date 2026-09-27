@@ -18,8 +18,13 @@ from src.subject_scoring import (
 IMAGE_SIZE = (6000, 4000)
 
 
-def person(bbox, confidence=0.9, sharpness=100.0) -> Detection:
-    return Detection(bbox=bbox, confidence=confidence, label="person", sharpness=sharpness)
+def person(bbox, confidence=0.9, sharpness=100.0, kit=None) -> Detection:
+    return Detection(bbox=bbox, confidence=confidence, label="person", sharpness=sharpness, kit_color=kit)
+
+
+RED = (50.0, 60.0, 40.0)
+BLUE = (35.0, 20.0, -60.0)
+NEON = (90.0, -40.0, 80.0)
 
 
 def ball(center, radius=0.01) -> Detection:
@@ -82,6 +87,58 @@ class TestSubjectFeatures:
     def test_empty(self):
         assert subject_features([]).shape == (0, len(SubjectWeights.names()))
         assert score_subjects([]) == []
+
+
+class TestRefereeAndCrowdFeatures:
+    """Tests for the signals that separate players from officials and spectators."""
+
+    def test_referee_kit_is_outlier(self):
+        people = [
+            person((0.1, 0.2, 0.2, 0.9), kit=RED),
+            person((0.3, 0.2, 0.4, 0.9), kit=(52.0, 58.0, 42.0)),
+            person((0.5, 0.2, 0.6, 0.9), kit=BLUE),
+            person((0.7, 0.2, 0.8, 0.9), kit=(36.0, 22.0, -58.0)),
+            person((0.85, 0.2, 0.95, 0.9), kit=NEON),
+        ]
+        features = subject_features(people)
+        outliers = [feature(features, i, "kit_outlier") for i in range(5)]
+        assert outliers[4] == max(outliers)
+        assert outliers[4] > 0.5
+        assert max(outliers[:4]) < 0.3
+
+    def test_kit_outlier_needs_three_shirts(self):
+        features = subject_features([person((0.1, 0.2, 0.2, 0.9), kit=RED),
+                                     person((0.5, 0.2, 0.6, 0.9), kit=NEON)])
+        assert feature(features, 0, "kit_outlier") == 0
+        assert feature(features, 1, "kit_outlier") == 0
+
+    def test_missing_kit_colour_is_ignored(self):
+        people = [person((0.1, 0.2, 0.2, 0.9), kit=RED), person((0.3, 0.2, 0.4, 0.9)),
+                  person((0.5, 0.2, 0.6, 0.9), kit=RED), person((0.7, 0.2, 0.8, 0.9), kit=RED)]
+        assert feature(subject_features(people), 1, "kit_outlier") == 0
+
+    def test_tiny(self):
+        features = subject_features([person((0.1, 0.1, 0.3, 0.9)), person((0.5, 0.5, 0.52, 0.6))])
+        assert feature(features, 0, "tiny") == 0
+        assert feature(features, 1, "tiny") == 1
+
+    def test_elevation_marks_people_above_the_main_subject(self):
+        player = person((0.3, 0.3, 0.5, 0.95))
+        spectator = person((0.7, 0.05, 0.75, 0.2))
+        features = subject_features([player, spectator])
+        assert feature(features, 0, "elevation") == 0
+        assert feature(features, 1, "elevation") > 0.9
+
+    def test_crowd_density(self):
+        crowd = [person((0.1 + 0.04 * i, 0.05, 0.13 + 0.04 * i, 0.15)) for i in range(5)]
+        loner = person((0.5, 0.3, 0.6, 0.9))
+        features = subject_features(crowd + [loner])
+        assert feature(features, 2, "crowd_density") == 1.0
+        assert feature(features, 5, "crowd_density") == 0.0
+
+    def test_new_features_have_zero_default_weight(self):
+        for name in ("kit_outlier", "tiny", "elevation", "crowd_density"):
+            assert getattr(SubjectWeights(), name) == 0.0
 
 
 class TestSportsSelection:

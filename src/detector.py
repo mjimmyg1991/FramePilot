@@ -21,6 +21,7 @@ class Detection:
     sharpness: float = 0.0  # Laplacian variance - higher = sharper/more in focus
     mask: np.ndarray | None = None  # Segmentation mask (binary, original image size)
     original_bbox: tuple[float, float, float, float] | None = None  # Original YOLO bbox before tightening
+    kit_color: tuple[float, float, float] | None = None  # Median CIE Lab colour of the torso
 
     @property
     def width(self) -> float:
@@ -49,6 +50,8 @@ class Detection:
 # Fractions of a subject box (x1, y1, x2, y2) measured for sharpness
 SHARPNESS_CORE = (0.2, 0.05, 0.8, 0.6)
 SHARPNESS_HEIGHT = 256
+# Fractions of a person box covering the shirt, below the head and above the waist
+TORSO_REGION = (0.3, 0.2, 0.7, 0.45)
 
 
 @dataclass
@@ -58,6 +61,32 @@ class SceneDetections:
     people: list[Detection]
     balls: list[Detection]
     image_size: tuple[int, int]  # width, height
+
+
+def calculate_kit_color(
+    image_lab: np.ndarray,
+    bbox: tuple[float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Median CIE Lab colour of a person's torso (shirt).
+
+    Args:
+        image_lab: Full image converted to float32 Lab (L 0-100)
+        bbox: Person bounding box (x1, y1, x2, y2) normalized 0-1
+
+    Returns:
+        (L, a, b) or None when the torso region is too small to sample
+    """
+    h, w = image_lab.shape[:2]
+    bw = bbox[2] - bbox[0]
+    bh = bbox[3] - bbox[1]
+    x1 = max(0, int((bbox[0] + bw * TORSO_REGION[0]) * w))
+    y1 = max(0, int((bbox[1] + bh * TORSO_REGION[1]) * h))
+    x2 = min(w, int((bbox[0] + bw * TORSO_REGION[2]) * w))
+    y2 = min(h, int((bbox[1] + bh * TORSO_REGION[3]) * h))
+    if x2 - x1 < 3 or y2 - y1 < 3:
+        return None
+    region = image_lab[y1:y2, x1:x2].reshape(-1, 3)
+    return tuple(float(v) for v in np.median(region, axis=0))
 
 
 def calculate_sharpness(image: np.ndarray, bbox: tuple[float, float, float, float]) -> float:
@@ -258,6 +287,10 @@ class SubjectDetector:
         # Calculate sharpness for each detection
         for det in detections:
             det.sharpness = calculate_sharpness(image, det.bbox)
+
+        image_lab = cv2.cvtColor(image.astype(np.float32) / 255.0, cv2.COLOR_BGR2Lab)
+        for det in detections:
+            det.kit_color = calculate_kit_color(image_lab, det.bbox)
 
         # Sort by confidence (highest first)
         detections.sort(key=lambda d: d.confidence, reverse=True)
