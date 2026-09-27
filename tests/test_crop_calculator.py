@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.crop_calculator import (
+    MIN_CROP_SCALE,
     CropRegion,
     calculate_vertical_crop,
     select_primary_subject,
@@ -102,7 +103,8 @@ class TestCalculateVerticalCrop:
 
         # Crop should be centered horizontally around 0.5
         assert crop.center[0] == pytest.approx(0.5, abs=0.01)
-        assert crop.height == pytest.approx(1.0)  # Full height
+        # Subject is 0.4 tall, so the minimum crop size (half height) applies
+        assert crop.height == pytest.approx(MIN_CROP_SCALE)
 
     def test_subject_left_of_center(self):
         """Subject left of center should shift crop left."""
@@ -180,11 +182,8 @@ class TestCalculateVerticalCrop:
             padding=0.0
         )
 
-        # 4:5 ratio from 3:2 image
-        # Source aspect = 1.5, target = 0.8
-        # Crop height = 1.0, crop width in normalized coords = 0.8 / 1.5 = 0.533
-        expected_width = (4/5) / (6000/4000)
-        assert crop.width == pytest.approx(expected_width, rel=0.01)
+        pixel_aspect = (crop.width * 6000) / (crop.height * 4000)
+        assert pixel_aspect == pytest.approx(4 / 5)
 
     def test_aspect_ratio_9_16(self):
         """Test 9:16 aspect ratio calculation."""
@@ -198,14 +197,12 @@ class TestCalculateVerticalCrop:
             padding=0.0
         )
 
-        # 9:16 ratio from 3:2 image
-        # Target aspect = 0.5625, source = 1.5
-        expected_width = (9/16) / (6000/4000)
-        assert crop.width == pytest.approx(expected_width, rel=0.01)
+        pixel_aspect = (crop.width * 6000) / (crop.height * 4000)
+        assert pixel_aspect == pytest.approx(9 / 16)
 
-    def test_padding_increases_crop_width(self):
-        """Test that padding increases effective crop width."""
-        subject_bbox = (0.4, 0.3, 0.6, 0.7)
+    def test_padding_increases_crop_size(self):
+        """Padding adds space around a subject that fills most of the frame."""
+        subject_bbox = (0.45, 0.2, 0.55, 0.8)
 
         crop_no_padding = calculate_vertical_crop(
             image_width=6000,
@@ -223,9 +220,9 @@ class TestCalculateVerticalCrop:
             padding=0.15
         )
 
-        # Both should use full height for vertical crop
-        # The padding doesn't increase crop size when subject fits
-        assert crop_no_padding.height == crop_with_padding.height
+        assert crop_no_padding.height == pytest.approx(0.6)
+        assert crop_with_padding.height == pytest.approx(0.6 * 1.3)
+        assert crop_with_padding.width > crop_no_padding.width
 
     def test_crop_bounds_valid(self):
         """Test that all crop values are within valid range."""
@@ -253,6 +250,89 @@ class TestCalculateVerticalCrop:
             assert 0.0 <= crop.bottom <= 1.0, f"Invalid bottom: {crop.bottom}"
             assert crop.left < crop.right, "Left should be less than right"
             assert crop.top < crop.bottom, "Top should be less than bottom"
+
+
+class TestCropSizing:
+    """Tests for how crops zoom in on subjects of different sizes."""
+
+    def crop(self, bbox, aspect=(4, 5), padding=0.15, size=(6000, 4000), **kwargs):
+        return calculate_vertical_crop(
+            image_width=size[0],
+            image_height=size[1],
+            subject_bbox=bbox,
+            target_aspect=aspect,
+            padding=padding,
+            **kwargs
+        )
+
+    def test_small_subject_limited_by_min_scale(self):
+        crop = self.crop((0.48, 0.5, 0.52, 0.6))
+        assert crop.height == pytest.approx(MIN_CROP_SCALE)
+
+    def test_larger_padding_zooms_out(self):
+        tight = self.crop((0.45, 0.3, 0.55, 0.7), padding=0.3)
+        loose = self.crop((0.45, 0.3, 0.55, 0.7), padding=0.6)
+        assert tight.height == pytest.approx(0.4 * 1.6)
+        assert loose.height == pytest.approx(0.4 * 2.2)
+
+    def test_min_scale_one_never_zooms(self):
+        crop = self.crop((0.48, 0.5, 0.52, 0.6), min_scale=1.0)
+        assert crop.top == pytest.approx(0.0)
+        assert crop.bottom == pytest.approx(1.0)
+
+    def test_tall_subject_uses_full_height(self):
+        crop = self.crop((0.45, 0.05, 0.55, 0.95))
+        assert crop.top == pytest.approx(0.0)
+        assert crop.bottom == pytest.approx(1.0)
+
+    def test_wide_subject_sets_size(self):
+        # 0.3 wide + 15% each side needs 0.39 of the width; at 4:5 on 3:2 that
+        # is 0.39 / (0.8 / 1.5) of the height
+        crop = self.crop((0.35, 0.45, 0.65, 0.55))
+        assert crop.width == pytest.approx(0.39)
+        assert crop.height == pytest.approx(0.39 * 1.5 / 0.8)
+
+    def test_subject_fully_inside_crop_with_padding(self):
+        bbox = (0.4, 0.25, 0.5, 0.75)
+        crop = self.crop(bbox, padding=0.1)
+        assert crop.left <= bbox[0] - 0.1 * 0.1 + 1e-9
+        assert crop.right >= bbox[2] + 0.1 * 0.1 - 1e-9
+        assert crop.top <= bbox[1]
+        assert crop.bottom >= bbox[3]
+
+    def test_headroom_smaller_than_footroom(self):
+        bbox = (0.45, 0.3, 0.55, 0.6)
+        crop = self.crop(bbox)
+        headroom = bbox[1] - crop.top
+        footroom = crop.bottom - bbox[3]
+        assert 0 < headroom < footroom
+
+    def test_subject_taller_than_crop_keeps_top(self):
+        # Portrait photo cropped to 16:9: the crop can't fit a full-height person
+        bbox = (0.3, 0.1, 0.7, 0.95)
+        crop = self.crop(bbox, aspect=(16, 9), size=(4000, 6000))
+        assert crop.width == pytest.approx(1.0)
+        assert crop.top == pytest.approx(0.1)
+
+    def test_subject_near_edge_is_clamped(self):
+        crop = self.crop((0.0, 0.9, 0.05, 1.0))
+        assert crop.left == pytest.approx(0.0)
+        assert crop.bottom == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("size", [(6000, 4000), (4000, 6000), (4000, 4000)])
+    @pytest.mark.parametrize("aspect", [(4, 5), (9, 16), (1, 1), (16, 9)])
+    @pytest.mark.parametrize("bbox", [
+        (0.0, 0.0, 0.1, 0.2),
+        (0.4, 0.3, 0.6, 0.7),
+        (0.1, 0.0, 0.9, 1.0),
+        (0.9, 0.8, 1.0, 1.0),
+    ])
+    def test_exact_aspect_and_bounds(self, size, aspect, bbox):
+        crop = self.crop(bbox, aspect=aspect, size=size)
+        assert 0.0 <= crop.left < crop.right <= 1.0 + 1e-9
+        assert 0.0 <= crop.top < crop.bottom <= 1.0 + 1e-9
+        pixel_aspect = (crop.width * size[0]) / (crop.height * size[1])
+        assert pixel_aspect == pytest.approx(aspect[0] / aspect[1])
 
 
 class TestDetection:

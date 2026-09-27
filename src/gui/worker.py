@@ -8,7 +8,8 @@ from typing import Callable
 
 import cv2
 
-from ..crop_calculator import CropRegion, calculate_crop_for_detection, select_primary_subject
+from ..crop_calculator import CropRegion, frame_subject
+from ..crop_candidates import rank_crops
 from ..detector import Detection, SubjectDetector
 from ..xmp_handler import write_crop_to_xmp
 
@@ -20,8 +21,10 @@ class ProcessingResult:
     file_path: Path
     status: str  # "success", "no_subject", "error"
     detections: list[Detection] = field(default_factory=list)
-    primary_detection: Detection | None = None
+    primary_detection: Detection | None = None  # Lead person, or the union box of a duel or group
+    subject_mode: str = "single"
     crop: CropRegion | None = None
+    alternate_crops: list[CropRegion] = field(default_factory=list)  # Next-best crops to offer
     error_message: str = ""
     image_size: tuple[int, int] = (0, 0)  # width, height
 
@@ -150,26 +153,32 @@ class ProcessingWorker:
             result.image_size = (width, height)
 
             # Detect subjects
-            detections = self._detector.detect(file_path)
+            scene = self._detector.detect_scene(file_path)
+            detections = scene.people
             result.detections = detections
 
             if not detections:
                 result.status = "no_subject"
                 return result
 
-            # Select primary subject
-            primary = select_primary_subject(detections, strategy)
-            result.primary_detection = primary
+            # Select primary subject (a person, duel or group)
+            choice = frame_subject(
+                detections, strategy, balls=scene.balls, image_size=(width, height)
+            )
 
             # Calculate crop
-            crop = calculate_crop_for_detection(
-                primary,
-                image_width=width,
-                image_height=height,
+            ranked = rank_crops(
+                choice,
+                detections,
+                balls=scene.balls,
+                image_size=(width, height),
                 target_aspect=aspect_ratio,
                 padding=padding,
             )
-            result.crop = crop
+            result.crop = ranked[0].crop
+            result.alternate_crops = [c.crop for c in ranked[1:]]
+            result.primary_detection = ranked[0].choice.as_detection()
+            result.subject_mode = ranked[0].choice.mode.value
             result.status = "success"
 
         except Exception as e:

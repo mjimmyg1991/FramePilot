@@ -21,6 +21,7 @@ class Detection:
     sharpness: float = 0.0  # Laplacian variance - higher = sharper/more in focus
     mask: np.ndarray | None = None  # Segmentation mask (binary, original image size)
     original_bbox: tuple[float, float, float, float] | None = None  # Original YOLO bbox before tightening
+    kit_color: tuple[float, float, float] | None = None  # Median CIE Lab colour of the torso
 
     @property
     def width(self) -> float:
@@ -46,10 +47,55 @@ class Detection:
         )
 
 
+# Fractions of a subject box (x1, y1, x2, y2) measured for sharpness
+SHARPNESS_CORE = (0.2, 0.05, 0.8, 0.6)
+SHARPNESS_HEIGHT = 256
+# Fractions of a person box covering the shirt, below the head and above the waist
+TORSO_REGION = (0.3, 0.2, 0.7, 0.45)
+
+
+@dataclass
+class SceneDetections:
+    """People and sports balls found in one image."""
+
+    people: list[Detection]
+    balls: list[Detection]
+    image_size: tuple[int, int]  # width, height
+
+
+def calculate_kit_color(
+    image: np.ndarray,
+    bbox: tuple[float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Median CIE Lab colour of a person's torso (shirt).
+
+    Args:
+        image: Full image (BGR)
+        bbox: Person bounding box (x1, y1, x2, y2) normalized 0-1
+
+    Returns:
+        (L, a, b) with L in 0-100, or None when the torso is too small to sample
+    """
+    h, w = image.shape[:2]
+    bw = bbox[2] - bbox[0]
+    bh = bbox[3] - bbox[1]
+    x1 = max(0, int((bbox[0] + bw * TORSO_REGION[0]) * w))
+    y1 = max(0, int((bbox[1] + bh * TORSO_REGION[1]) * h))
+    x2 = min(w, int((bbox[0] + bw * TORSO_REGION[2]) * w))
+    y2 = min(h, int((bbox[1] + bh * TORSO_REGION[3]) * h))
+    if x2 - x1 < 3 or y2 - y1 < 3:
+        return None
+    patch = image[y1:y2, x1:x2].astype(np.float32) / 255.0
+    region = cv2.cvtColor(patch, cv2.COLOR_BGR2Lab).reshape(-1, 3)
+    return tuple(float(v) for v in np.median(region, axis=0))
+
+
 def calculate_sharpness(image: np.ndarray, bbox: tuple[float, float, float, float]) -> float:
     """Calculate sharpness of a region using Laplacian variance.
 
-    Higher values indicate sharper/more in-focus regions.
+    Higher values indicate sharper/more in-focus regions. Only the core of
+    the box (head and torso for a person) is measured, so busy backgrounds
+    around the subject don't count as detail.
 
     Args:
         image: Full image (BGR)
@@ -59,6 +105,17 @@ def calculate_sharpness(image: np.ndarray, bbox: tuple[float, float, float, floa
         Sharpness score (Laplacian variance)
     """
     h, w = image.shape[:2]
+    bw = bbox[2] - bbox[0]
+    bh = bbox[3] - bbox[1]
+    core = (
+        bbox[0] + bw * SHARPNESS_CORE[0],
+        bbox[1] + bh * SHARPNESS_CORE[1],
+        bbox[0] + bw * SHARPNESS_CORE[2],
+        bbox[1] + bh * SHARPNESS_CORE[3],
+    )
+    if (core[2] - core[0]) * w >= 8 and (core[3] - core[1]) * h >= 8:
+        bbox = core
+
     x1 = int(bbox[0] * w)
     y1 = int(bbox[1] * h)
     x2 = int(bbox[2] * w)
@@ -81,6 +138,12 @@ def calculate_sharpness(image: np.ndarray, bbox: tuple[float, float, float, floa
         gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
     else:
         gray = region
+
+    # Compare regions at a similar scale so large subjects aren't penalized
+    if gray.shape[0] > SHARPNESS_HEIGHT:
+        scale = SHARPNESS_HEIGHT / gray.shape[0]
+        gray = cv2.resize(gray, (max(1, int(gray.shape[1] * scale)), SHARPNESS_HEIGHT),
+                          interpolation=cv2.INTER_AREA)
 
     # Calculate Laplacian variance (higher = sharper)
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
@@ -137,6 +200,8 @@ class SubjectDetector:
     """Unified interface for subject detection using YOLO and face detection."""
 
     PERSON_CLASS_ID = 0  # COCO class ID for person
+    SPORTS_BALL_CLASS_ID = 32
+    BALL_CONFIDENCE_THRESHOLD = 0.25
 
     def __init__(
         self,
@@ -191,6 +256,17 @@ class SubjectDetector:
         Returns:
             List of Detection objects sorted by confidence (highest first)
         """
+        return self.detect_scene(image_path).people
+
+    def detect_scene(self, image_path: str | Path) -> SceneDetections:
+        """Detect people and sports balls in an image.
+
+        Args:
+            image_path: Path to the image file
+
+        Returns:
+            SceneDetections with people sorted by confidence (highest first)
+        """
         image_path = Path(image_path)
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
@@ -203,7 +279,7 @@ class SubjectDetector:
         height, width = image.shape[:2]
 
         # Try person detection first
-        detections = self._detect_yolo(image, width, height)
+        detections, balls = self._detect_yolo(image, width, height)
 
         # If no person detected, try face detection as fallback
         if not detections:
@@ -213,18 +289,22 @@ class SubjectDetector:
         for det in detections:
             det.sharpness = calculate_sharpness(image, det.bbox)
 
+        for det in detections:
+            det.kit_color = calculate_kit_color(image, det.bbox)
+
         # Sort by confidence (highest first)
         detections.sort(key=lambda d: d.confidence, reverse=True)
+        balls.sort(key=lambda d: d.confidence, reverse=True)
 
-        return detections
+        return SceneDetections(people=detections, balls=balls, image_size=(width, height))
 
     def _detect_yolo(
         self,
         image: np.ndarray,
         img_width: int,
         img_height: int
-    ) -> list[Detection]:
-        """Run YOLO segmentation detection for persons.
+    ) -> tuple[list[Detection], list[Detection]]:
+        """Run YOLO detection for persons and sports balls.
 
         Uses segmentation masks to derive tighter bounding boxes than
         standard object detection when available.
@@ -235,10 +315,11 @@ class SubjectDetector:
             img_height: Image height in pixels
 
         Returns:
-            List of Detection objects for persons
+            Tuple of (person detections, sports ball detections)
         """
         results = self.yolo_model(image, verbose=False)
         detections = []
+        balls = []
 
         for result in results:
             boxes = result.boxes
@@ -251,7 +332,19 @@ class SubjectDetector:
                 cls = int(boxes.cls[i])
                 conf = float(boxes.conf[i])
 
-                # Only detect persons
+                if cls == self.SPORTS_BALL_CLASS_ID and conf >= self.BALL_CONFIDENCE_THRESHOLD:
+                    bx1, by1, bx2, by2 = boxes.xyxy[i].cpu().numpy()
+                    ball_bbox = (
+                        float(bx1 / img_width),
+                        float(by1 / img_height),
+                        float(bx2 / img_width),
+                        float(by2 / img_height)
+                    )
+                    balls.append(Detection(
+                        bbox=ball_bbox, confidence=conf, label="sports_ball", original_bbox=ball_bbox
+                    ))
+                    continue
+
                 if cls != self.PERSON_CLASS_ID:
                     continue
 
@@ -300,7 +393,7 @@ class SubjectDetector:
                     original_bbox=original_bbox
                 ))
 
-        return detections
+        return detections, balls
 
     def _detect_faces(
         self,

@@ -11,9 +11,9 @@ from rich.table import Table
 
 from .crop_calculator import (
     CropRegion,
-    calculate_crop_for_detection,
-    select_primary_subject,
+    frame_subject,
 )
+from .crop_candidates import rank_crops
 from .detector import Detection, SubjectDetector
 from .xmp_handler import get_xmp_path, write_crop_to_xmp
 
@@ -196,7 +196,8 @@ def process(
 
             try:
                 # Detect subjects
-                detections = detector.detect(image_path)
+                scene = detector.detect_scene(image_path)
+                detections = scene.people
 
                 if not detections:
                     result["status"] = "no_subject"
@@ -204,13 +205,19 @@ def process(
                         console.print(f"  [yellow]No subject detected[/yellow]")
                 else:
                     # Select primary subject
-                    primary = select_primary_subject(detections, detection_strategy)
+                    choice = frame_subject(
+                        detections,
+                        detection_strategy,
+                        balls=scene.balls,
+                        image_size=scene.image_size,
+                    )
+                    primary = choice.as_detection()
                     result["detection"] = primary
 
                     if verbose:
                         console.print(
                             f"  Detected {len(detections)} subject(s), "
-                            f"primary: {primary.label} ({primary.confidence:.2f})"
+                            f"framing: {choice.mode.value} ({choice.primary.confidence:.2f})"
                         )
 
                     # Get image dimensions
@@ -222,13 +229,14 @@ def process(
                         height, width = image.shape[:2]
 
                         # Calculate crop
-                        crop = calculate_crop_for_detection(
-                            primary,
-                            image_width=width,
-                            image_height=height,
+                        crop = rank_crops(
+                            choice,
+                            detections,
+                            balls=scene.balls,
+                            image_size=(width, height),
                             target_aspect=target_aspect,
                             padding=padding
-                        )
+                        )[0].crop
                         result["crop"] = crop
 
                         if verbose:
