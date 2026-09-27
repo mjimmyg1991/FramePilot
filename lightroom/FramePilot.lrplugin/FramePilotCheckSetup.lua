@@ -30,8 +30,12 @@ local function engineCommand(engineArgs)
 	return table.concat(parts, ' ')
 end
 
-local function showReport(ok, lines)
+local function showReport(ok, lines, workDir)
 	local headline = ok and 'FramePilot is set up correctly.' or 'FramePilot setup check failed.'
+	if workDir then
+		lines[#lines + 1] = { 'Logs', workDir }
+		Engine.writeFile(LrPathUtils.child(workDir, 'check.txt'), headline .. '\n' .. Core.setupReport(lines) .. '\n')
+	end
 	LrDialogs.message(headline, Core.setupReport(lines), ok and 'info' or 'critical')
 end
 
@@ -43,23 +47,23 @@ function CheckSetup.run(context)
 		{ 'Lightroom', lightroomVersion() },
 	}
 
+	local okRun, workDir = pcall(Engine.newRunFolder, 'check')
+	if not okRun then
+		workDir = LrPathUtils.child(
+			LrPathUtils.getStandardFilePath('temp'),
+			string.format('FramePilot-check-%d-%d', os.time(), math.random(100000, 999999))
+		)
+		LrFileUtils.createAllDirectories(workDir)
+	end
+
 	local engineArgs, engineError = Engine.resolve(prefs)
 	if not engineArgs then
 		lines[#lines + 1] = { 'Engine', engineError }
-		showReport(false, lines)
+		showReport(false, lines, workDir)
 		return false, lines
 	end
 	lines[#lines + 1] = { 'Engine', engineArgs.path .. ' (' .. engineArgs.source .. ')' }
 	lines[#lines + 1] = { 'Command', engineCommand(engineArgs) }
-
-	local workDir = LrPathUtils.child(
-		LrPathUtils.getStandardFilePath('temp'),
-		string.format('FramePilot-check-%d-%d', os.time(), math.random(100000, 999999))
-	)
-	LrFileUtils.createAllDirectories(workDir)
-	context:addCleanupHandler(function()
-		LrFileUtils.delete(workDir)
-	end)
 
 	local progress = LrProgressScope {
 		title = 'FramePilot: checking setup',
@@ -74,7 +78,7 @@ function CheckSetup.run(context)
 		lines[#lines + 1] = { 'Engine version', 'the engine failed to start (exit code ' .. tostring(versionExit) .. ')' }
 		lines[#lines + 1] = { 'Engine output', Core.tail(versionText, 1200) }
 		progress:done()
-		showReport(false, lines)
+		showReport(false, lines, workDir)
 		return false, lines
 	end
 	lines[#lines + 1] = { 'Engine version', (versionText:gsub('%s+$', '')) }
@@ -83,7 +87,7 @@ function CheckSetup.run(context)
 	if not Engine.fileExists(testPhoto) then
 		lines[#lines + 1] = { 'Test photo', 'missing from the plugin folder: ' .. testPhoto }
 		progress:done()
-		showReport(false, lines)
+		showReport(false, lines, workDir)
 		return false, lines
 	end
 
@@ -127,7 +131,7 @@ function CheckSetup.run(context)
 		lines[#lines + 1] = { 'Test photo', description .. ' Took ' .. seconds .. ' s.' }
 	end
 
-	showReport(ok, lines)
+	showReport(ok, lines, workDir)
 	return ok, lines
 end
 

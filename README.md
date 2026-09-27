@@ -59,6 +59,9 @@ When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead
 - To keep the original framing, create virtual copies first and crop those.
 - Photos with a straightened or rotated crop (a non-zero crop angle) and videos are skipped and listed in the summary.
 
+**Logs**
+Each run keeps its `job.json`, `result.tsv`, `engine.log` and `plugin.log` in its own folder under `%APPDATA%\FramePilot\logs` on Windows (`~/Library/Application Support/FramePilot/logs` on macOS). The last 10 runs are kept. The summary and error dialogs name the run's folder, and Plug-in Manager has a **Show Logs** button. Zip the folder to report a problem.
+
 ### Smart Select for sports
 
 Smart Select picks the main subject the way a sports photographer would. It scores each detected person on:

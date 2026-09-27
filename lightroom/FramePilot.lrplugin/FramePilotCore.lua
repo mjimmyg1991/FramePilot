@@ -220,6 +220,37 @@ function Core.setupReport(lines)
 	return table.concat(out, '\n')
 end
 
+-- Number of runs whose job, results and logs are kept in the log folder.
+Core.KEEP_RUNS = 10
+
+local RUN_FOLDER_PATTERN = '^%d%d%d%d%d%d%d%d%-%d%d%d%d%d%d%-'
+
+-- Name of a run's log folder, e.g. 20260927-141503-autocrop. Names sort by time.
+function Core.runFolderName(timestamp, kind, attempt)
+	local name = timestamp .. '-' .. kind
+	if attempt and attempt > 1 then
+		name = name .. '-' .. attempt
+	end
+	return name
+end
+
+-- Given the names in the log folder, returns the run folders to delete so
+-- that `keep` remain. Anything not named like a run folder is left alone.
+function Core.runsToPrune(names, keep)
+	local runs = {}
+	for _, name in ipairs(names) do
+		if name:match(RUN_FOLDER_PATTERN) then
+			runs[#runs + 1] = name
+		end
+	end
+	table.sort(runs)
+	local prune = {}
+	for i = 1, #runs - keep do
+		prune[#prune + 1] = runs[i]
+	end
+	return prune
+end
+
 -- Keeps the last maxLength characters of a log for display in a dialog.
 function Core.tail(text, maxLength)
 	if not text or #text <= maxLength then

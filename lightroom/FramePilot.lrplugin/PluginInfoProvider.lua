@@ -1,5 +1,7 @@
 local LrDialogs = import 'LrDialogs'
+local LrFileUtils = import 'LrFileUtils'
 local LrFunctionContext = import 'LrFunctionContext'
+local LrShell = import 'LrShell'
 local LrPrefs = import 'LrPrefs'
 local LrView = import 'LrView'
 
@@ -52,6 +54,18 @@ return {
 							end)
 						end,
 					},
+					f:push_button {
+						title = 'Show Logs',
+						action = function()
+							local root = require('FramePilotEngine').logRoot()
+							LrFileUtils.createAllDirectories(root)
+							LrShell.revealInShell(root)
+						end,
+					},
+				},
+				f:row {
+					f:static_text { title = 'Logs:', alignment = 'right', width = labelWidth },
+					f:static_text { title = require('FramePilotEngine').logRoot(), selectable = true },
 				},
 			},
 		}

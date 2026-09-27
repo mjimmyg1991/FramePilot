@@ -5,6 +5,7 @@ The Lightroom SDK is replaced with small fakes so the plugin's glue logic
 exercised together with the real Python engine.
 """
 
+import contextlib
 import json
 import shlex
 from pathlib import Path
@@ -164,6 +165,42 @@ class TestCoreDevelopSettings:
         assert not core.isStraightened(lua.eval("{}"))
 
 
+def install_file_system(lua, fake, tmp_path):
+    """Back the fake LrFileUtils with the real file system under tmp_path."""
+    fake.tempRoot = str(tmp_path / "temp")
+    fake.appDataRoot = str(tmp_path / "AppData")
+    fake.mkdir = lambda path: Path(path).mkdir(parents=True, exist_ok=True)
+
+    def path_kind(path):
+        path = Path(path)
+        return "directory" if path.is_dir() else "file" if path.is_file() else False
+
+    def list_dir(path, files_only):
+        path = Path(path)
+        entries = sorted(path.iterdir()) if path.is_dir() else []
+        return lua.table_from([str(p) for p in entries if p.is_file() or not files_only])
+
+    def remove(path):
+        path = Path(path)
+        if path.is_dir():
+            path.rmdir()
+        elif path.exists():
+            path.unlink()
+
+    fake.pathKind = path_kind
+    fake.listDir = list_dir
+    fake.remove = remove
+
+
+def log_root(tmp_path: Path) -> Path:
+    return tmp_path / "AppData" / "FramePilot" / "logs"
+
+
+def run_folders(tmp_path: Path, kind: str) -> list[Path]:
+    root = log_root(tmp_path)
+    return sorted(p for p in root.iterdir() if p.name.endswith(kind) or f"-{kind}-" in p.name)
+
+
 def split_command(command: str) -> tuple[list[str], str]:
     """Split a POSIX engine command from buildCommand into (args, log path)."""
     parts = shlex.split(command)
@@ -249,15 +286,21 @@ local modules = {
     LrFileUtils = {
         exists = function(path)
             if path:match('framepilot%-engine') then return fake.engineExists and 'file' or false end
-            local handle = io.open(path, 'r')
-            if handle then handle:close(); return 'file' end
-            return false
+            return fake.pathKind(path)
         end,
         createAllDirectories = function(path)
             fake.workDir = path
             fake.mkdir(path)
         end,
-        delete = function() end,
+        directoryEntries = function(path)
+            local entries, i = fake.listDir(path, false), 0
+            return function() i = i + 1; return entries[i] end
+        end,
+        files = function(path)
+            local entries, i = fake.listDir(path, true), 0
+            return function() i = i + 1; return entries[i] end
+        end,
+        delete = function(path) fake.remove(path) end,
     },
     LrFunctionContext = {
         callWithContext = function(_, fn) return fn({ addCleanupHandler = function() end }) end,
@@ -265,10 +308,14 @@ local modules = {
     LrPathUtils = {
         child = function(a, b) return a .. '/' .. b end,
         parent = function(p) return (p:gsub('/[^/]*$', '')) end,
-        getStandardFilePath = function() return fake.tempRoot end,
+        getStandardFilePath = function(name)
+            if name == 'appData' then return fake.appDataRoot end
+            return fake.tempRoot
+        end,
     },
     LrPrefs = { prefsForPlugin = function() return fake.prefs end },
     LrProgressScope = function() return progress end,
+    LrShell = { revealInShell = function(path) fake.revealed = path end },
     LrTasks = {
         execute = function(command)
             fake.commands[#fake.commands + 1] = command
@@ -294,54 +341,66 @@ return fake
 """
 
 
+def make_auto_crop_harness(lua, tmp_path):
+    """Fake SDK with a real engine whose detector finds subjects by rendition name."""
+    fake = lua.execute(FAKE_SDK)
+    install_file_system(lua, fake, tmp_path)
+    fake.prefs = lua.table()
+
+    def render(spec, folder):
+        if spec.renderFails:
+            return False, "Source file is missing"
+        path = Path(folder) / f"{spec.name}.jpg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(path), np.zeros((spec.height or 400, spec.width or 600, 3), dtype=np.uint8))
+        return True, str(path)
+
+    subjects = {}
+
+    class ByNameDetector:
+        def detect_scene(self, image_path):
+            bbox = subjects.get(Path(image_path).stem)
+            people = [Detection(bbox=bbox, confidence=0.9, label="person")] if bbox else []
+            return SceneDetections(people=people, balls=[], image_size=(0, 0))
+
+    def execute(command):
+        args, log_path = split_command(command)
+        engine_args = args[1:]
+        if engine_args == ["--version"]:
+            Path(log_path).write_text(version_text() + "\n", encoding="utf-8")
+            return 0
+        job_path, result_path = engine_args
+        with open(log_path, "w", encoding="utf-8") as log, contextlib.redirect_stdout(log):
+            return run_job(job_path, result_path, detector=ByNameDetector())
+
+    fake.render = render
+    fake.execute = execute
+    auto_crop = lua.eval("require('FramePilotAutoCrop')")
+    return fake, auto_crop, subjects
+
+
+def add_photo(lua, fake, **spec):
+    photo = fake.makePhoto(lua.table_from(spec))
+    fake.photos[len(fake.photos) + 1] = photo
+    return photo
+
+
+def run_auto_crop(lua, auto_crop):
+    auto_crop.run(lua.eval("{ addCleanupHandler = function() end }"))
+
+
 class TestAutoCropFlow:
     """Runs the full plugin flow against the fake SDK and the real engine."""
 
     @pytest.fixture
     def harness(self, lua, tmp_path):
-        fake = lua.execute(FAKE_SDK)
-        fake.tempRoot = str(tmp_path)
-        fake.prefs = lua.table()
-        fake.mkdir = lambda path: Path(path).mkdir(parents=True, exist_ok=True)
-
-        def render(spec, folder):
-            if spec.renderFails:
-                return False, "Source file is missing"
-            path = Path(folder) / f"{spec.name}.jpg"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(str(path), np.zeros((spec.height or 400, spec.width or 600, 3), dtype=np.uint8))
-            return True, str(path)
-
-        subjects = {}
-
-        class ByNameDetector:
-            def detect_scene(self, image_path):
-                bbox = subjects.get(Path(image_path).stem)
-                people = [Detection(bbox=bbox, confidence=0.9, label="person")] if bbox else []
-                return SceneDetections(people=people, balls=[], image_size=(0, 0))
-
-        def execute(command):
-            args, log_path = split_command(command)
-            engine_args = args[1:]
-            if engine_args == ["--version"]:
-                Path(log_path).write_text(version_text() + "\n", encoding="utf-8")
-                return 0
-            job_path, result_path = engine_args
-            return run_job(job_path, result_path, detector=ByNameDetector())
-
-        fake.render = render
-        fake.execute = execute
-        auto_crop = lua.eval("require('FramePilotAutoCrop')")
-        return fake, auto_crop, subjects
+        return make_auto_crop_harness(lua, tmp_path)
 
     def add_photo(self, lua, fake, **spec):
-        photo = fake.makePhoto(lua.table_from(spec))
-        fake.photos[len(fake.photos) + 1] = photo
-        return photo
+        return add_photo(lua, fake, **spec)
 
     def run(self, lua, auto_crop):
-        context = lua.eval("{ addCleanupHandler = function() end }")
-        auto_crop.run(context)
+        run_auto_crop(lua, auto_crop)
 
     def test_crops_applied_and_problems_reported(self, lua, harness):
         fake, auto_crop, subjects = harness
@@ -393,7 +452,8 @@ class TestAutoCropFlow:
 
         self.run(lua, auto_crop)
 
-        job = json.loads((Path(fake.workDir) / "job.json").read_text(encoding="utf-8"))
+        (run_dir,) = run_folders(tmp_path, "autocrop")
+        job = json.loads((run_dir / "job.json").read_text(encoding="utf-8"))
         assert job["settings"]["aspect_ratio"] == "9:16"
         assert job["settings"]["strategy"] == "largest"
         assert job["settings"]["padding"] == pytest.approx(0.15)
@@ -465,15 +525,114 @@ class TestAutoCropFlow:
         assert len(fake.applied) == 0
 
 
+class TestRunLogs:
+    """Each run's job, results and logs outlive the temp folder."""
+
+    @pytest.fixture
+    def harness(self, lua, tmp_path):
+        return make_auto_crop_harness(lua, tmp_path)
+
+    def run(self, lua, auto_crop):
+        run_auto_crop(lua, auto_crop)
+
+    def test_run_folder_keeps_job_results_and_logs(self, lua, harness, tmp_path):
+        fake, auto_crop, subjects = harness
+        subjects["hero"] = (0.45, 0.1, 0.55, 0.9)
+        add_photo(lua, fake, id=1, name="hero", develop=lua.table_from({"orientation": "BC"}))
+
+        self.run(lua, auto_crop)
+
+        (run_dir,) = run_folders(tmp_path, "autocrop")
+        assert {"job.json", "result.tsv", "engine.log", "plugin.log"} <= {p.name for p in run_dir.iterdir()}
+        engine_log = (run_dir / "engine.log").read_text(encoding="utf-8")
+        assert "photo 1: orientation BC" in engine_log
+        plugin_log = (run_dir / "plugin.log").read_text(encoding="utf-8")
+        assert "FramePilot plugin 0.2.0" in plugin_log
+        assert "Photo 1 hero: orientation BC" in plugin_log
+        assert "Cropped 1 photo to 4:5." in plugin_log
+        summary = lua_table_to_python(fake.messages)[0]
+        assert f"Logs: {run_dir}" in summary["info"]
+
+    def test_engine_failure_names_log_folder(self, lua, harness, tmp_path):
+        fake, auto_crop, _ = harness
+
+        def failing_execute(command):
+            _, log_path = split_command(command)
+            Path(log_path).write_text("Traceback: model missing", encoding="utf-8")
+            return 1
+
+        fake.execute = failing_execute
+        add_photo(lua, fake, id=1, name="hero")
+
+        self.run(lua, auto_crop)
+
+        (run_dir,) = run_folders(tmp_path, "autocrop")
+        message = lua_table_to_python(fake.messages)[0]
+        assert message["style"] == "critical"
+        assert str(run_dir) in message["info"]
+        assert (run_dir / "engine.log").read_text(encoding="utf-8") == "Traceback: model missing"
+
+    def test_keeps_only_recent_runs(self, lua, harness, tmp_path):
+        fake, auto_crop, subjects = harness
+        root = log_root(tmp_path)
+        for day in range(1, 13):
+            old = root / f"202601{day:02d}-120000-autocrop"
+            old.mkdir(parents=True)
+            (old / "engine.log").write_text("old", encoding="utf-8")
+        (root / "notes").mkdir()
+        subjects["hero"] = (0.45, 0.1, 0.55, 0.9)
+        add_photo(lua, fake, id=1, name="hero")
+
+        self.run(lua, auto_crop)
+
+        remaining = sorted(p.name for p in root.iterdir())
+        assert "notes" in remaining
+        runs = [name for name in remaining if name != "notes"]
+        assert len(runs) == 10
+        assert runs[0] == "20260104-120000-autocrop"
+        assert not runs[-1].startswith("2026010")
+
+    def test_runs_in_the_same_second_get_separate_folders(self, lua, harness, tmp_path):
+        fake, auto_crop, subjects = harness
+        subjects["hero"] = (0.45, 0.1, 0.55, 0.9)
+        add_photo(lua, fake, id=1, name="hero")
+        lua.execute("os.date = function() return '20260927-101010' end")
+
+        self.run(lua, auto_crop)
+        self.run(lua, auto_crop)
+
+        names = sorted(p.name for p in log_root(tmp_path).iterdir())
+        assert names == ["20260927-101010-autocrop", "20260927-101010-autocrop-2"]
+
+
+class TestCoreRunFolders:
+    """Tests for naming and pruning run folders."""
+
+    def test_run_folder_name(self, core):
+        assert core.runFolderName("20260927-141503", "autocrop") == "20260927-141503-autocrop"
+        assert core.runFolderName("20260927-141503", "check", 3) == "20260927-141503-check-3"
+
+    def test_prunes_oldest_run_folders_only(self, lua, core):
+        names = lua.table_from([
+            "20260927-100000-check", "notes", "20260925-090000-autocrop",
+            "20260926-090000-autocrop", "20260927-100000-autocrop-2",
+        ])
+        prune = lua_table_to_python(core.runsToPrune(names, 2))
+        assert prune == ["20260925-090000-autocrop", "20260926-090000-autocrop"]
+
+    def test_nothing_to_prune(self, lua, core):
+        names = lua.table_from(["20260927-100000-check"])
+        assert lua_table_to_python(core.runsToPrune(names, 10)) in ([], {})
+
+
 class TestCheckSetup:
     """Runs Check Setup against the fake SDK, the real engine and the bundled photo."""
 
     @pytest.fixture
     def harness(self, lua, tmp_path):
         fake = lua.execute(FAKE_SDK)
-        fake.tempRoot = str(tmp_path)
+        install_file_system(lua, fake, tmp_path)
         fake.prefs = lua.table()
-        fake.mkdir = lambda path: Path(path).mkdir(parents=True, exist_ok=True)
         lua.execute(f"_PLUGIN = {{ path = [[{PLUGIN_DIR}]] }}")
 
         state = {"detected": True, "version_exit": 0, "jobs": []}
@@ -494,7 +653,8 @@ class TestCheckSetup:
                 return state["version_exit"]
             job_path, result_path = engine_args
             state["jobs"].append(json.loads(Path(job_path).read_text(encoding="utf-8")))
-            return run_job(job_path, result_path, detector=TestPhotoDetector())
+            with open(log_path, "w", encoding="utf-8") as log, contextlib.redirect_stdout(log):
+                return run_job(job_path, result_path, detector=TestPhotoDetector())
 
         fake.execute = execute
         check_setup = lua.eval("require('FramePilotCheckSetup')")
@@ -526,6 +686,20 @@ class TestCheckSetup:
         photo = state["jobs"][0]["photos"][0]
         assert Path(photo["path"]) == PLUGIN_DIR / "check-photo.jpg"
         assert photo["orientation"] == "AB"
+
+    def test_report_and_engine_output_kept_in_log_folder(self, lua, harness, tmp_path):
+        fake, check_setup, _ = harness
+
+        ok, report = self.run(lua, check_setup)
+
+        (run_dir,) = run_folders(tmp_path, "check")
+        assert report["Logs"] == str(run_dir)
+        assert {"check.txt", "version.txt", "job.json", "result.tsv", "engine.log"} <= {
+            p.name for p in run_dir.iterdir()
+        }
+        check = (run_dir / "check.txt").read_text(encoding="utf-8")
+        assert check.startswith("FramePilot is set up correctly.")
+        assert "photo check: orientation AB" in (run_dir / "engine.log").read_text(encoding="utf-8")
 
     def test_no_subject_fails(self, lua, harness):
         fake, check_setup, state = harness

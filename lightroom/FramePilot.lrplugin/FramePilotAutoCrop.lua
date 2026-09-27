@@ -140,7 +140,7 @@ local function describeList(heading, entries)
 	return table.concat(lines, '\n')
 end
 
-local function showSummary(cropped, notCropped, aspectRatio)
+local function showSummary(cropped, notCropped, aspectRatio, runDir)
 	local sections = {}
 	for _, section in ipairs(notCropped) do
 		local text = describeList(section.heading, section.entries)
@@ -148,7 +148,13 @@ local function showSummary(cropped, notCropped, aspectRatio)
 			sections[#sections + 1] = text
 		end
 	end
+	if runDir then
+		sections[#sections + 1] = 'Logs: ' .. runDir
+	end
 	local headline = string.format('Cropped %d photo%s to %s.', cropped, cropped == 1 and '' or 's', aspectRatio)
+	if runDir then
+		Engine.log(runDir, headline)
+	end
 	LrDialogs.message(headline, table.concat(sections, '\n\n'), cropped > 0 and 'info' or 'warning')
 end
 
@@ -172,15 +178,31 @@ function AutoCrop.run(context)
 		return
 	end
 
+	local okRun, runDir = pcall(Engine.newRunFolder, 'autocrop')
+	if not okRun then
+		runDir = nil
+	end
+	local function log(line)
+		if runDir then
+			Engine.log(runDir, line)
+		end
+	end
+	log(string.format('FramePilot plugin %s, Lightroom %s, %s', Core.PLUGIN_VERSION,
+		tostring(LrApplication.versionString()), WIN_ENV and 'Windows' or 'macOS'))
+	log('Engine: ' .. table.concat(engineArgs, ' ') .. ' (' .. engineArgs.source .. ')')
+	log('Settings: ' .. Core.encodeJson(settings))
+
 	local eligible, byId = {}, {}
 	local skippedVideo, skippedAngle, renderFailed, noSubject, failed = {}, {}, {}, {}, {}
 	for _, photo in ipairs(photos) do
 		if photo:getRawMetadata('isVideo') then
 			skippedVideo[#skippedVideo + 1] = photoName(photo)
+			log('Skipped video: ' .. photoName(photo))
 		else
 			local developSettings = photo:getDevelopSettings()
 			if Core.isStraightened(developSettings) then
 				skippedAngle[#skippedAngle + 1] = photoName(photo)
+				log('Skipped crop angle ' .. tostring(developSettings.CropAngle) .. ': ' .. photoName(photo))
 			else
 				local id = tostring(photo.localIdentifier)
 				eligible[#eligible + 1] = photo
@@ -198,7 +220,7 @@ function AutoCrop.run(context)
 	}
 
 	if #eligible == 0 then
-		showSummary(0, notCropped, settings.aspect_ratio)
+		showSummary(0, notCropped, settings.aspect_ratio, runDir)
 		return
 	end
 
@@ -210,6 +232,7 @@ function AutoCrop.run(context)
 	context:addCleanupHandler(function()
 		LrFileUtils.delete(workDir)
 	end)
+	runDir = runDir or workDir
 
 	local progress = LrProgressScope {
 		title = 'FramePilot: rendering ' .. #eligible .. ' photo' .. (#eligible == 1 and '' or 's'),
@@ -233,8 +256,11 @@ function AutoCrop.run(context)
 				orientation = entry.develop.orientation or 'AB',
 				current_crop = Core.currentCrop(entry.develop),
 			}
+			log(string.format('Photo %s %s: orientation %s, current crop %s', id, photoName(entry.photo),
+				tostring(entry.develop.orientation), Core.formatCrop(Core.currentCrop(entry.develop))))
 		else
 			renderFailed[#renderFailed + 1] = photoName(rendition.photo) .. ': ' .. tostring(pathOrMessage)
+			log('Render failed: ' .. photoName(rendition.photo) .. ': ' .. tostring(pathOrMessage))
 		end
 	end
 
@@ -242,23 +268,24 @@ function AutoCrop.run(context)
 		return
 	end
 	if #jobPhotos == 0 then
-		showSummary(0, notCropped, settings.aspect_ratio)
+		showSummary(0, notCropped, settings.aspect_ratio, runDir)
 		return
 	end
 
 	progress:setCaption('Finding subjects (the first run loads the detection model)...')
 
-	local jobPath = LrPathUtils.child(workDir, 'job.json')
-	local resultPath = LrPathUtils.child(workDir, 'result.tsv')
-	local logPath = LrPathUtils.child(workDir, 'engine.log')
+	local jobPath = LrPathUtils.child(runDir, 'job.json')
+	local resultPath = LrPathUtils.child(runDir, 'result.tsv')
+	local logPath = LrPathUtils.child(runDir, 'engine.log')
 	Engine.writeFile(jobPath, Core.encodeJson({ settings = settings, photos = jobPhotos }))
 
 	local exitCode = Engine.execute(engineArgs, { jobPath, resultPath }, logPath)
 	local resultText = Engine.readFile(resultPath)
+	log('Engine exit code ' .. tostring(exitCode))
 	if exitCode ~= 0 or not resultText then
 		LrDialogs.message(
 			'FramePilot: the crop engine failed (exit code ' .. tostring(exitCode) .. ').',
-			Core.tail(Engine.readFile(logPath), 1500),
+			Core.tail(Engine.readFile(logPath), 1200) .. '\n\n' .. Engine.logNote(runDir),
 			'critical'
 		)
 		return
@@ -269,6 +296,8 @@ function AutoCrop.run(context)
 	for _, job in ipairs(jobPhotos) do
 		local entry = byId[job.id]
 		local result = results[job.id]
+		log(string.format('Photo %s result: %s %s %s', job.id, result and result.status or 'missing',
+			result and result.crop and Core.formatCrop(result.crop) or '', result and result.message or ''))
 		if result and result.status == 'success' then
 			toApply[#toApply + 1] = { photo = entry.photo, crop = result.crop }
 		elseif result and result.status == 'no_subject' then
@@ -294,7 +323,7 @@ function AutoCrop.run(context)
 	end, { timeout = 60 })
 
 	progress:done()
-	showSummary(#toApply, notCropped, settings.aspect_ratio)
+	showSummary(#toApply, notCropped, settings.aspect_ratio, runDir)
 end
 
 return AutoCrop

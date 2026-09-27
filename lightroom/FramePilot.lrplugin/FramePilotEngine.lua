@@ -70,6 +70,71 @@ function Engine.resolve(prefs)
 		.. exeName .. ', or set the engine location in File > Plug-in Manager.'
 end
 
+local function standardFolder(name)
+	local ok, path = pcall(LrPathUtils.getStandardFilePath, name)
+	if ok and path and path ~= '' then
+		return path
+	end
+	return nil
+end
+
+-- Folder that keeps the last few runs' job, results and logs:
+-- %APPDATA%\FramePilot\logs on Windows, ~/Library/Application Support/FramePilot/logs on macOS.
+function Engine.logRoot()
+	local base = standardFolder('appData') or standardFolder('documents') or standardFolder('temp')
+	return LrPathUtils.child(LrPathUtils.child(base, 'FramePilot'), 'logs')
+end
+
+local function baseName(path)
+	return path:match('([^/\\]+)[/\\]*$') or path
+end
+
+-- Removes older run folders so that `keep` remain.
+function Engine.pruneRuns(root, keep)
+	local names = {}
+	for path in LrFileUtils.directoryEntries(root) do
+		names[#names + 1] = baseName(path)
+	end
+	for _, name in ipairs(Core.runsToPrune(names, keep)) do
+		local folder = LrPathUtils.child(root, name)
+		for file in LrFileUtils.files(folder) do
+			LrFileUtils.delete(file)
+		end
+		LrFileUtils.delete(folder)
+	end
+end
+
+-- Creates a new run folder in the log folder, keeping the last few runs.
+-- Returns the folder path.
+function Engine.newRunFolder(kind)
+	local root = Engine.logRoot()
+	LrFileUtils.createAllDirectories(root)
+	local timestamp = os.date('%Y%m%d-%H%M%S')
+	local attempt = 1
+	local folder = LrPathUtils.child(root, Core.runFolderName(timestamp, kind))
+	while LrFileUtils.exists(folder) do
+		attempt = attempt + 1
+		folder = LrPathUtils.child(root, Core.runFolderName(timestamp, kind, attempt))
+	end
+	LrFileUtils.createAllDirectories(folder)
+	Engine.pruneRuns(root, Core.KEEP_RUNS)
+	return folder
+end
+
+-- Appends a line to the plugin's log in the run folder.
+function Engine.log(runDir, line)
+	local handle = io.open(LrPathUtils.child(runDir, 'plugin.log'), 'a')
+	if handle then
+		handle:write(os.date('%H:%M:%S') .. '  ' .. line .. '\n')
+		handle:close()
+	end
+end
+
+-- Text naming the run's log folder, for dialogs.
+function Engine.logNote(runDir)
+	return 'Logs for this run (job.json, result.tsv, engine.log, plugin.log) are in:\n' .. runDir
+end
+
 -- Runs the engine with extra arguments, sending its output to logPath.
 -- Returns the exit code.
 function Engine.execute(engineArgs, extraArgs, logPath)
