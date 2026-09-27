@@ -56,6 +56,30 @@ When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead
 - To keep the original framing, create virtual copies first and crop those.
 - Photos with a straightened or rotated crop (a non-zero crop angle) and videos are skipped and listed in the summary.
 
+### Smart Select for sports
+
+Smart Select picks the main subject the way a sports photographer would. It scores each detected person on:
+- how large and in-focus they are compared with everyone else
+- how close they are to the ball, and whether they're the closest player to it
+- whether the frame edge cuts them off (a player half out of frame is rarely the subject)
+
+Small, sharp background figures, blurry foreground spectators and players cut off at the frame edge lose to the player in the action.
+
+**Tune it on your own photos.** Put a mix of your multi-person sports shots in a folder, then:
+
+```bash
+# Click the main subject in each photo (s = skip, q = save and quit)
+python -m src.subject_training label path/to/photos
+
+# How often Smart Select agrees with you; saves pictures of the misses
+python -m src.subject_training evaluate path/to/photos --report path/to/misses
+
+# Fit the weights to your labels
+python -m src.subject_training train path/to/photos
+```
+
+`train` writes `config/subject_weights.json`, which the app, CLI and Lightroom plugin all use. It only saves when the new weights beat the current ones on photos held out from training. A few hundred labelled photos with more than one person gives a meaningful result.
+
 ### Desktop GUI
 
 Launch the graphical interface:

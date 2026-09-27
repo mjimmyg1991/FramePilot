@@ -150,7 +150,8 @@ class ProcessingWorker:
             result.image_size = (width, height)
 
             # Detect subjects
-            detections = self._detector.detect(file_path)
+            scene = self._detector.detect_scene(file_path)
+            detections = scene.people
             result.detections = detections
 
             if not detections:
@@ -158,7 +159,9 @@ class ProcessingWorker:
                 return result
 
             # Select primary subject
-            primary = select_primary_subject(detections, strategy)
+            primary = select_primary_subject(
+                detections, strategy, balls=scene.balls, image_size=(width, height)
+            )
             result.primary_detection = primary
 
             # Calculate crop

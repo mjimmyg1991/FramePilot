@@ -14,7 +14,7 @@ import pytest
 
 lupa_lua51 = pytest.importorskip("lupa.lua51")
 
-from src.detector import Detection
+from src.detector import Detection, SceneDetections
 from src.lrc_bridge import run_job
 
 
@@ -297,9 +297,10 @@ class TestAutoCropFlow:
         subjects = {}
 
         class ByNameDetector:
-            def detect(self, image_path):
+            def detect_scene(self, image_path):
                 bbox = subjects.get(Path(image_path).stem)
-                return [Detection(bbox=bbox, confidence=0.9, label="person")] if bbox else []
+                people = [Detection(bbox=bbox, confidence=0.9, label="person")] if bbox else []
+                return SceneDetections(people=people, balls=[], image_size=(0, 0))
 
         def execute(command):
             parts = command.split("' '")

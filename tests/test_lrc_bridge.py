@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from src.crop_calculator import CropRegion
-from src.detector import Detection
+from src.detector import Detection, SceneDetections
 from src.lrc_bridge import (
     LrcJobItem,
     LrcJobSettings,
@@ -30,9 +30,9 @@ class FakeDetector:
         self.detections = detections
         self.calls: list[Path] = []
 
-    def detect(self, image_path: str | Path) -> list[Detection]:
+    def detect_scene(self, image_path: str | Path) -> SceneDetections:
         self.calls.append(Path(image_path))
-        return list(self.detections)
+        return SceneDetections(people=list(self.detections), balls=[], image_size=(0, 0))
 
 
 def make_person(bbox: tuple[float, float, float, float]) -> Detection:
@@ -180,10 +180,11 @@ class TestRunJob:
         result_path = tmp_path / "result.tsv"
 
         class SelectiveDetector:
-            def detect(self, image_path):
+            def detect_scene(self, image_path):
+                people = []
                 if Path(image_path).name == "good.jpg":
-                    return [make_person((0.2, 0.1, 0.3, 0.9))]
-                return []
+                    people = [make_person((0.2, 0.1, 0.3, 0.9))]
+                return SceneDetections(people=people, balls=[], image_size=(0, 0))
 
         exit_code = run_job(job_path, result_path, detector=SelectiveDetector())
 

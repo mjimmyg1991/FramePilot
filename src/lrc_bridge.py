@@ -21,7 +21,7 @@ from .crop_calculator import (
     calculate_crop_for_detection,
     select_primary_subject,
 )
-from .detector import Detection, SubjectDetector
+from .detector import SceneDetections, SubjectDetector
 
 
 CORNER_POSITIONS = {
@@ -37,7 +37,7 @@ VALID_STRATEGIES = {"highest_confidence", "largest", "centered", "group"}
 class Detector(Protocol):
     """Anything that can find subjects in an image file."""
 
-    def detect(self, image_path: str | Path) -> list[Detection]: ...
+    def detect_scene(self, image_path: str | Path) -> SceneDetections: ...
 
 
 @dataclass
@@ -199,11 +199,16 @@ def process_item(
         return LrcJobResult(id=item.id, status="error", message="Could not read rendition")
     height, width = image.shape[:2]
 
-    detections = detector.detect(item.path)
-    if not detections:
+    scene = detector.detect_scene(item.path)
+    if not scene.people:
         return LrcJobResult(id=item.id, status="no_subject", message="No subject detected")
 
-    primary = select_primary_subject(detections, settings.strategy)
+    primary = select_primary_subject(
+        scene.people,
+        settings.strategy,
+        balls=scene.balls,
+        image_size=(width, height),
+    )
     rendition_crop = calculate_crop_for_detection(
         primary,
         image_width=width,

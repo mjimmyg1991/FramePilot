@@ -196,7 +196,8 @@ def process(
 
             try:
                 # Detect subjects
-                detections = detector.detect(image_path)
+                scene = detector.detect_scene(image_path)
+                detections = scene.people
 
                 if not detections:
                     result["status"] = "no_subject"
@@ -204,7 +205,12 @@ def process(
                         console.print(f"  [yellow]No subject detected[/yellow]")
                 else:
                     # Select primary subject
-                    primary = select_primary_subject(detections, detection_strategy)
+                    primary = select_primary_subject(
+                        detections,
+                        detection_strategy,
+                        balls=scene.balls,
+                        image_size=scene.image_size,
+                    )
                     result["detection"] = primary
 
                     if verbose:

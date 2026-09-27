@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (138 tests)
+# Run tests (167 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -29,6 +29,11 @@ python -m src.main process <path> --dry-run
 
 # Lightroom Classic plugin engine (normally run by the plugin)
 python engine.py <job.json> <result.tsv>
+
+# Smart Select: label your photos, measure accuracy, fit weights
+python -m src.subject_training label <photo_folder>
+python -m src.subject_training evaluate <photo_folder> --report <misses_dir>
+python -m src.subject_training train <photo_folder>
 ```
 
 ---
@@ -41,11 +46,14 @@ lightroom-subject-crop/
 ├── engine.py                       # Headless engine entry for the LrC plugin
 ├── requirements.txt                # Dependencies
 ├── config/default_config.yaml      # Default settings
+├── config/subject_weights.json     # Trained Smart Select weights (optional; code defaults otherwise)
 │
 ├── src/
 │   ├── main.py                     # CLI entry (typer)
 │   ├── detector.py                 # YOLOv8m-seg + face detection
 │   ├── crop_calculator.py          # Crop math & subject selection
+│   ├── subject_scoring.py          # Sports-aware Smart Select features + weights
+│   ├── subject_training.py         # Label/evaluate/train CLI for subject weights
 │   ├── xmp_handler.py              # XMP sidecar read/write
 │   ├── presets.py                  # Shoot types, destinations, strategies
 │   ├── scene_classifier.py         # CLIP-based auto-detect
@@ -73,13 +81,15 @@ lightroom-subject-crop/
 └── tests/
     ├── test_crop_calculator.py     # Crop math tests
     ├── test_lrc_bridge.py          # Engine + orientation mapping tests
+    ├── test_subject_scoring.py     # Smart Select features + sports scenarios
+    ├── test_subject_training.py    # Label matching + weight fitting
     └── test_lrc_plugin.py          # Plugin Lua tests (lupa, fake LrC SDK)
 ```
 
 ### Key Data Flow
 
-1. **Detection**: `detector.py` → YOLOv8m-seg detects persons with segmentation masks → returns `Detection` objects with tight bboxes derived from masks
-2. **Subject Selection**: `crop_calculator.py` → picks primary subject via strategy (highest_confidence/largest/centered)
+1. **Detection**: `detector.py` → `detect_scene()` returns people (tight bboxes from masks in precise mode) and sports balls (COCO class 32); sharpness is measured on each person's core (head/torso)
+2. **Subject Selection**: `crop_calculator.py` → picks primary subject via strategy. Smart Select (`highest_confidence`) uses `subject_scoring.py`: weighted features (relative size, sharpness, confidence, centrality, side/top frame cut-off, ball proximity, ball holder). Weights come from `config/subject_weights.json` if present, else `SubjectWeights` defaults
 3. **Crop Calculation**: `crop_calculator.py` → sizes the `CropRegion` to fit subject + padding (never below `MIN_CROP_SCALE` of the largest fitting crop; `min_scale=1.0` = full height), spare height mostly below the subject (`HEADROOM_SHARE`), clamped to image bounds
 4. **Output**: `xmp_handler.py` → writes XMP sidecar OR `worker.py` → exports cropped JPEG
 
@@ -194,7 +204,7 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **138 tests passing** - Crop logic, LrC engine and plugin Lua covered
+- **167 tests passing** - Crop logic, subject scoring/training, LrC engine and plugin Lua covered
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list
 

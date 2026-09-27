@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .detector import Detection
+from .subject_scoring import SubjectWeights, score_subjects
 
 
 MIN_CROP_SCALE = 0.5
@@ -127,19 +128,26 @@ def should_use_landscape(
 
 def select_primary_subject(
     detections: list[Detection],
-    strategy: Literal["largest", "centered", "highest_confidence", "group"] = "highest_confidence"
+    strategy: Literal["largest", "centered", "highest_confidence", "group"] = "highest_confidence",
+    balls: list[Detection] | None = None,
+    image_size: tuple[int, int] | None = None,
+    weights: SubjectWeights | None = None
 ) -> Detection | None:
     """Select the primary subject from a list of detections.
 
-    All strategies now factor in sharpness to avoid selecting out-of-focus subjects.
-    A detection that is significantly blurrier than others will be penalized.
+    All strategies factor in sharpness to avoid selecting out-of-focus subjects.
 
     Args:
         detections: List of Detection objects
         strategy: Selection strategy
             - "largest": Select the detection with largest bounding box area (sharpness-weighted)
             - "centered": Select the detection closest to image center (sharpness-weighted)
-            - "highest_confidence": Select best detection by confidence × sharpness
+            - "highest_confidence": Smart Select; sports-aware score combining size,
+              focus, ball proximity, frame-edge cut-off and confidence
+            - "group": Combine all detections into one box
+        balls: Sports ball detections, used by Smart Select
+        image_size: (width, height) in pixels, used by Smart Select
+        weights: Smart Select feature weights (defaults to the configured weights)
 
     Returns:
         Selected Detection or None if no detections
@@ -179,9 +187,8 @@ def select_primary_subject(
             return -distance * (2.0 - sharpness_factor(det))
         return max(detections, key=score_centered)
     elif strategy == "highest_confidence":
-        # Combine confidence with sharpness
-        # confidence * sharpness_factor gives strong preference to sharp + confident
-        return max(detections, key=lambda d: d.confidence * sharpness_factor(d))
+        scores = score_subjects(detections, balls, image_size, weights)
+        return detections[max(range(len(detections)), key=scores.__getitem__)]
     elif strategy == "group":
         # Combine all detections into a single bounding box
         return combine_detections(detections)
