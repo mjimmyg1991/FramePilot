@@ -8,7 +8,7 @@ from typing import Callable
 
 import cv2
 
-from ..crop_calculator import CropRegion, calculate_crop_for_detection, select_primary_subject
+from ..crop_calculator import CropRegion, calculate_crop_for_subject, frame_subject
 from ..detector import Detection, SubjectDetector
 from ..xmp_handler import write_crop_to_xmp
 
@@ -20,7 +20,8 @@ class ProcessingResult:
     file_path: Path
     status: str  # "success", "no_subject", "error"
     detections: list[Detection] = field(default_factory=list)
-    primary_detection: Detection | None = None
+    primary_detection: Detection | None = None  # Lead person, or the union box of a duel or group
+    subject_mode: str = "single"
     crop: CropRegion | None = None
     error_message: str = ""
     image_size: tuple[int, int] = (0, 0)  # width, height
@@ -158,15 +159,16 @@ class ProcessingWorker:
                 result.status = "no_subject"
                 return result
 
-            # Select primary subject
-            primary = select_primary_subject(
+            # Select primary subject (a person, duel or group)
+            choice = frame_subject(
                 detections, strategy, balls=scene.balls, image_size=(width, height)
             )
-            result.primary_detection = primary
+            result.primary_detection = choice.as_detection()
+            result.subject_mode = choice.mode.value
 
             # Calculate crop
-            crop = calculate_crop_for_detection(
-                primary,
+            crop = calculate_crop_for_subject(
+                choice,
                 image_width=width,
                 image_height=height,
                 target_aspect=aspect_ratio,

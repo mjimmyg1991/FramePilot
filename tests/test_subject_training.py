@@ -17,6 +17,7 @@ from src.subject_training import (
     iou,
     load_labels,
     match_label,
+    mode_report,
     predict,
     save_labels,
     summarize,
@@ -153,6 +154,29 @@ class TestSummarize:
     def test_is_hit(self):
         ex = TrainingExample(name="x.jpg", features=np.zeros((3, 1)), label_index=2, member_indices=[0, 2])
         assert ex.is_hit(2) and ex.is_hit(0) and not ex.is_hit(1)
+
+
+class TestModeReport:
+    """Tests for scoring the single/duel/group decision."""
+
+    def test_counts_modes_and_members(self):
+        duel_people = [person((0.40, 0.2, 0.50, 0.9)), person((0.52, 0.2, 0.62, 0.9)),
+                       person((0.05, 0.1, 0.07, 0.2))]
+        lone_people = [person((0.1, 0.2, 0.2, 0.9)), person((0.7, 0.2, 0.8, 0.9))]
+        names = SubjectWeights.names()
+        duel = TrainingExample(name="d.jpg", features=np.zeros((3, len(names))), label_index=0,
+                               people=duel_people, mode="duel", member_indices=[0, 1],
+                               image_size=(600, 400))
+        lone = TrainingExample(name="s.jpg", features=np.zeros((2, len(names))), label_index=0,
+                               people=lone_people, mode="single", image_size=(600, 400))
+
+        report = mode_report([duel, lone], SubjectWeights())
+
+        assert report["confusion"]["duel"]["duel"] == 1
+        assert report["confusion"]["single"]["single"] == 1
+        assert report["framing"] == (2, 2)
+        assert report["member_recall"] == (2, 2)
+        assert report["member_precision"] == (2, 2)
 
 
 class TestBuildExamples:

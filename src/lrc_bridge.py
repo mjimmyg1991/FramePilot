@@ -18,8 +18,8 @@ import cv2
 from .crop_calculator import (
     MIN_CROP_SCALE,
     CropRegion,
-    calculate_crop_for_detection,
-    select_primary_subject,
+    calculate_crop_for_subject,
+    frame_subject,
 )
 from .detector import SceneDetections, SubjectDetector
 
@@ -203,14 +203,14 @@ def process_item(
     if not scene.people:
         return LrcJobResult(id=item.id, status="no_subject", message="No subject detected")
 
-    primary = select_primary_subject(
+    choice = frame_subject(
         scene.people,
         settings.strategy,
         balls=scene.balls,
         image_size=(width, height),
     )
-    rendition_crop = calculate_crop_for_detection(
-        primary,
+    rendition_crop = calculate_crop_for_subject(
+        choice,
         image_width=width,
         image_height=height,
         target_aspect=settings.aspect_ratio,
@@ -226,7 +226,9 @@ def process_item(
         bottom=visible.top + rendition_crop.bottom * visible.height,
     )
     develop_crop = display_to_original(display_crop, item.orientation)
-    return LrcJobResult(id=item.id, status="success", crop=_clamp_unit(develop_crop))
+    return LrcJobResult(
+        id=item.id, status="success", crop=_clamp_unit(develop_crop), message=choice.mode.value
+    )
 
 
 def _parse_aspect_ratio(value: str) -> tuple[int, int]:

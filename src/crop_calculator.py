@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .detector import Detection
+from .subject_modes import MODE_EXTRA_PADDING, SubjectChoice, SubjectMode, choose_subject
 from .subject_scoring import SubjectWeights, score_subjects
 
 
@@ -196,6 +197,39 @@ def select_primary_subject(
         raise ValueError(f"Unknown selection strategy: {strategy}")
 
 
+def frame_subject(
+    detections: list[Detection],
+    strategy: Literal["largest", "centered", "highest_confidence", "group"] = "highest_confidence",
+    balls: list[Detection] | None = None,
+    image_size: tuple[int, int] | None = None,
+    weights: SubjectWeights | None = None
+) -> SubjectChoice | None:
+    """Choose what to frame: one person, a duel or a group.
+
+    Smart Select decides the mode from the scene; the other strategies pick
+    one person, except "group", which frames everyone.
+
+    Args:
+        detections: Person detections
+        strategy: Selection strategy (see select_primary_subject)
+        balls: Sports ball detections, used by Smart Select
+        image_size: (width, height) in pixels
+        weights: Smart Select feature weights
+
+    Returns:
+        SubjectChoice, or None if there are no detections
+    """
+    if not detections:
+        return None
+    if strategy == "highest_confidence":
+        return choose_subject(detections, balls, image_size, weights)
+    if strategy == "group" and len(detections) > 1:
+        lead = select_primary_subject(detections, "largest")
+        return SubjectChoice(mode=SubjectMode.GROUP, primary=lead, members=list(detections))
+    primary = select_primary_subject(detections, strategy)
+    return SubjectChoice(mode=SubjectMode.SINGLE, primary=primary, members=[primary])
+
+
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(value, high))
 
@@ -287,5 +321,36 @@ def calculate_crop_for_detection(
         subject_bbox=detection.bbox,
         target_aspect=target_aspect,
         padding=padding,
+        min_scale=min_scale
+    )
+
+
+def calculate_crop_for_subject(
+    choice: SubjectChoice,
+    image_width: int,
+    image_height: int,
+    target_aspect: tuple[int, int] = (4, 5),
+    padding: float = 0.15,
+    min_scale: float = MIN_CROP_SCALE
+) -> CropRegion:
+    """Calculate the crop for a chosen subject, looser for duels and groups.
+
+    Args:
+        choice: Subject from frame_subject
+        image_width: Image width in pixels
+        image_height: Image height in pixels
+        target_aspect: Target aspect ratio as (width, height)
+        padding: Padding around a single subject; duels and groups add more
+        min_scale: Smallest crop as a fraction of the largest crop that fits
+
+    Returns:
+        CropRegion with normalized coordinates
+    """
+    return calculate_vertical_crop(
+        image_width=image_width,
+        image_height=image_height,
+        subject_bbox=choice.bbox,
+        target_aspect=target_aspect,
+        padding=padding + MODE_EXTRA_PADDING[choice.mode],
         min_scale=min_scale
     )

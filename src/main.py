@@ -11,8 +11,8 @@ from rich.table import Table
 
 from .crop_calculator import (
     CropRegion,
-    calculate_crop_for_detection,
-    select_primary_subject,
+    calculate_crop_for_subject,
+    frame_subject,
 )
 from .detector import Detection, SubjectDetector
 from .xmp_handler import get_xmp_path, write_crop_to_xmp
@@ -205,18 +205,19 @@ def process(
                         console.print(f"  [yellow]No subject detected[/yellow]")
                 else:
                     # Select primary subject
-                    primary = select_primary_subject(
+                    choice = frame_subject(
                         detections,
                         detection_strategy,
                         balls=scene.balls,
                         image_size=scene.image_size,
                     )
+                    primary = choice.as_detection()
                     result["detection"] = primary
 
                     if verbose:
                         console.print(
                             f"  Detected {len(detections)} subject(s), "
-                            f"primary: {primary.label} ({primary.confidence:.2f})"
+                            f"framing: {choice.mode.value} ({choice.primary.confidence:.2f})"
                         )
 
                     # Get image dimensions
@@ -228,8 +229,8 @@ def process(
                         height, width = image.shape[:2]
 
                         # Calculate crop
-                        crop = calculate_crop_for_detection(
-                            primary,
+                        crop = calculate_crop_for_subject(
+                            choice,
                             image_width=width,
                             image_height=height,
                             target_aspect=target_aspect,

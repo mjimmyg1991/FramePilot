@@ -23,6 +23,7 @@ import typer
 from src import resource_path
 
 from .detector import Detection, SubjectDetector
+from .subject_modes import SubjectMode, choose_subject
 from .subject_scoring import (
     WEIGHTS_PATH,
     SubjectWeights,
@@ -50,6 +51,7 @@ class TrainingExample:
     balls: list[Detection] = field(default_factory=list)
     mode: str = "single"
     member_indices: list[int] = field(default_factory=list)
+    image_size: tuple[int, int] | None = None
 
     def is_hit(self, index: int) -> bool:
         """True if the index is the labelled subject or, for a duel or group, one of its members."""
@@ -135,6 +137,7 @@ def build_examples(
             balls=scene.balls,
             mode=label.get("mode", "single"),
             member_indices=sorted({m for m in members if m is not None}),
+            image_size=scene.image_size,
         ))
     return examples, unmatched
 
@@ -239,6 +242,42 @@ def summarize(
         add("any_member", ex.is_hit(picked))
         add(ex.mode, ex.is_hit(picked))
     return rows
+
+
+MODES = [m.value for m in SubjectMode]
+
+
+def mode_report(examples: list[TrainingExample], weights: SubjectWeights) -> dict:
+    """How well Smart Select's single/duel/group decision matches the labels.
+
+    Returns:
+        Dict with "confusion" ({labelled: {predicted: count}}), "framing"
+        ((hits, total) for single vs duel-or-group), and "member_recall" /
+        "member_precision" ((found, total) over labelled duels and groups)
+    """
+    confusion = {m: {p: 0 for p in MODES} for m in MODES}
+    framing = [0, 0]
+    recall = [0, 0]
+    precision = [0, 0]
+    for ex in examples:
+        choice = choose_subject(ex.people, ex.balls, ex.image_size, weights)
+        predicted = choice.mode.value
+        confusion[ex.mode][predicted] += 1
+        framing[0] += int((ex.mode == "single") == (predicted == "single"))
+        framing[1] += 1
+        if ex.mode != "single" and ex.member_indices:
+            chosen = {i for i, p in enumerate(ex.people) if any(p is m for m in choice.members)}
+            labelled = set(ex.member_indices)
+            recall[0] += len(chosen & labelled)
+            recall[1] += len(labelled)
+            precision[0] += len(chosen & labelled)
+            precision[1] += len(chosen)
+    return {
+        "confusion": confusion,
+        "framing": tuple(framing),
+        "member_recall": tuple(recall),
+        "member_precision": tuple(precision),
+    }
 
 
 def cross_validated_predictions(
@@ -381,6 +420,7 @@ def evaluate(
     _print_dataset_summary(examples, unmatched)
     typer.echo("Current weights:")
     _print_summary(summarize(examples, weights))
+    _print_mode_report(mode_report(examples, weights))
     if cross_validated:
         typer.echo("Trained on other folds, held-out photos:")
         _print_summary(summarize(examples, predictions=cross_validated_predictions(examples, weights, l2=l2)))
@@ -447,6 +487,20 @@ def _print_summary(rows: dict[str, tuple[int, int]]) -> None:
         if key in rows:
             hits, total = rows[key]
             typer.echo(f"{labels[key]:30s} {hits:4d}/{total:<4d} {hits / total:6.1%}")
+
+
+def _print_mode_report(report: dict) -> None:
+    typer.echo("Subject mode (rows labelled, columns picked):")
+    typer.echo("            " + "".join(f"{m:>8s}" for m in MODES))
+    for labelled in MODES:
+        row = report["confusion"][labelled]
+        typer.echo(f"  {labelled:10s}" + "".join(f"{row[p]:8d}" for p in MODES))
+    for key, name in [("framing", "Single vs duel/group framing"),
+                      ("member_recall", "Labelled members framed"),
+                      ("member_precision", "Framed members labelled")]:
+        hits, total = report[key]
+        if total:
+            typer.echo(f"{name:30s} {hits:4d}/{total:<4d} {hits / total:6.1%}")
 
 
 def _print_dataset_summary(examples: list[TrainingExample], unmatched: list[str]) -> None:

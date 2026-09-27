@@ -107,7 +107,7 @@ def _log_ratio(value: float, maximum: float) -> float:
     return max(MIN_LOG_RATIO, math.log(value / maximum))
 
 
-def _distance_to_box(
+def distance_to_box(
     point: tuple[float, float],
     bbox: tuple[float, float, float, float],
     aspect: float,
@@ -189,7 +189,7 @@ def subject_features(
     ball_distances = []
     for person in people:
         if balls:
-            nearest = min(_distance_to_box(b.center, person.bbox, aspect) for b in balls)
+            nearest = min(distance_to_box(b.center, person.bbox, aspect) for b in balls)
             ball_distances.append(nearest / max(person.height, 1e-6))
         else:
             ball_distances.append(None)
