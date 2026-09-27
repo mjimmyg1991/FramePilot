@@ -48,8 +48,10 @@ local JSON_ESCAPES = {
 	['\t'] = '\\t',
 }
 
+-- Only ASCII control characters are escaped. Lua's %c follows the C locale,
+-- which on macOS also matches bytes 0x80-0x9F inside UTF-8 letters like Ü or ß.
 local function encodeString(value)
-	local escaped = value:gsub('[%c"\\]', function(char)
+	local escaped = value:gsub('[%z\1-\31"\\]', function(char)
 		return JSON_ESCAPES[char] or string.format('\\u%04x', char:byte())
 	end)
 	return '"' .. escaped .. '"'

@@ -89,6 +89,23 @@ class TestCoreJson:
         value = lua.eval("{ path = 'Fotos/Café/ß.jpg' }")
         assert json.loads(core.encodeJson(value)) == {"path": "Fotos/Café/ß.jpg"}
 
+    def test_every_byte_round_trips(self, lua, core):
+        text = "".join(chr(i) for i in range(1, 128)) + "ÄÖÜÉÀßéü€漢字"
+        value = lua.table_from({"path": text})
+        assert json.loads(core.encodeJson(value)) == {"path": text}
+
+    def test_utf8_survives_latin1_locale(self, lua, core):
+        # macOS's iscntrl() treats 0x80-0x9F as control characters; a Latin-1
+        # locale reproduces that on Linux (set LOCPATH to a compiled one)
+        if not lua.eval("os.setlocale('en_US.ISO-8859-1', 'ctype') or os.setlocale('en_US.ISO8859-1', 'ctype')"):
+            pytest.skip("no Latin-1 locale available")
+        try:
+            assert lua.eval("string.find(string.char(0x9f), '%c')") is not None
+            value = lua.eval("{ path = 'Fotos/ÜBER/ß.jpg' }")
+            assert json.loads(core.encodeJson(value)) == {"path": "Fotos/ÜBER/ß.jpg"}
+        finally:
+            lua.eval("os.setlocale('C', 'ctype')")
+
 
 class TestCoreResults:
     """Tests for parsing the engine's tab-separated results."""

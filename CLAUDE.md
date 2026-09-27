@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (293 tests)
+# Run tests (295 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -233,7 +233,7 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **293 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
+- **295 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
 - **Sports regression set**: `eval/` (see `docs/research/phase1-results.md` for current numbers)
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list
