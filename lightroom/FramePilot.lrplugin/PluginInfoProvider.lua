@@ -65,7 +65,7 @@ return {
 				},
 				f:row {
 					f:static_text { title = 'Logs:', alignment = 'right', width = labelWidth },
-					f:static_text { title = require('FramePilotEngine').logRoot(), selectable = true },
+					f:static_text { title = require('FramePilotEngine').logRoot() },
 				},
 			},
 		}
