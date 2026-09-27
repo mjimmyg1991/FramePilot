@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (167 tests)
+# Run tests (222 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -34,6 +34,10 @@ python engine.py <job.json> <result.tsv>
 python -m src.subject_training label <photo_folder>
 python -m src.subject_training evaluate <photo_folder> --report <misses_dir>
 python -m src.subject_training train <photo_folder>
+
+# Sports regression set: fetch photos, then evaluate (add --cross-validate for held-out numbers)
+python eval/fetch_sports_eval.py /tmp/sports-eval
+python -m src.subject_training evaluate /tmp/sports-eval --cross-validate
 ```
 
 ---
@@ -53,6 +57,8 @@ lightroom-subject-crop/
 │   ├── detector.py                 # YOLOv8m-seg + face detection
 │   ├── crop_calculator.py          # Crop math & subject selection
 │   ├── subject_scoring.py          # Sports-aware Smart Select features + weights
+│   ├── subject_modes.py            # Single / duel / group decision
+│   ├── crop_candidates.py          # GAIC-style candidate crops, hard rejects, scoring
 │   ├── subject_training.py         # Label/evaluate/train CLI for subject weights
 │   ├── xmp_handler.py              # XMP sidecar read/write
 │   ├── presets.py                  # Shoot types, destinations, strategies
@@ -71,6 +77,13 @@ lightroom-subject-crop/
 │       ├── darktable.py            # darktable library.db reader
 │       └── capture_one.py          # Capture One .cocatalog reader
 │
+├── eval/
+│   ├── sports/subjects.json        # 218 labelled sports photos (subject, mode, members)
+│   ├── fetch_sports_eval.py        # Downloads the images (not in git)
+│   └── compare_sharpness.py        # Focus-measure comparison on a labelled folder
+│
+├── docs/research/                  # Composition brief + phase 1 results
+│
 ├── lightroom/
 │   └── FramePilot.lrplugin/        # Lightroom Classic plugin (Lua 5.1)
 │       ├── Info.lua                # Plugin manifest + menu items
@@ -82,16 +95,18 @@ lightroom-subject-crop/
     ├── test_crop_calculator.py     # Crop math tests
     ├── test_lrc_bridge.py          # Engine + orientation mapping tests
     ├── test_subject_scoring.py     # Smart Select features + sports scenarios
-    ├── test_subject_training.py    # Label matching + weight fitting
+    ├── test_subject_training.py    # Label matching, weight fitting, evaluate reports
+    ├── test_subject_modes.py       # Single/duel/group + mode framing
+    ├── test_crop_candidates.py     # Candidate windows, rejects, terms, fallbacks
     └── test_lrc_plugin.py          # Plugin Lua tests (lupa, fake LrC SDK)
 ```
 
 ### Key Data Flow
 
 1. **Detection**: `detector.py` → `detect_scene()` returns people (tight bboxes from masks in precise mode) and sports balls (COCO class 32); sharpness is measured on each person's core (head/torso)
-2. **Subject Selection**: `crop_calculator.py` → picks primary subject via strategy. Smart Select (`highest_confidence`) uses `subject_scoring.py`: weighted features (relative size, sharpness, confidence, centrality, side/top frame cut-off, ball proximity, ball holder). Weights come from `config/subject_weights.json` if present, else `SubjectWeights` defaults
-3. **Crop Calculation**: `crop_calculator.py` → sizes the `CropRegion` to fit subject + padding (never below `MIN_CROP_SCALE` of the largest fitting crop; `min_scale=1.0` = full height), spare height mostly below the subject (`HEADROOM_SHARE`), clamped to image bounds
-4. **Output**: `xmp_handler.py` → writes XMP sidecar OR `worker.py` → exports cropped JPEG
+2. **Subject Selection**: `crop_calculator.frame_subject()` → `SubjectChoice`. Smart Select (`highest_confidence`) scores people with `subject_scoring.py` (weighted features: size, sharpness, confidence, centrality, side/top cut-off, ball proximity/holder, plus referee/crowd signals `kit_outlier`, `tiny`, `elevation`, `crowd_density` at weight 0 until trained), then `subject_modes.choose_subject()` decides single / duel / group. Weights come from `config/subject_weights.json` if present, else `SubjectWeights` defaults. New person-level signals go in `SubjectWeights` so `train` can weight them
+3. **Crop Calculation**: `crop_candidates.rank_crops()` generates ~90 windows around the subject (base window from `calculate_crop_for_subject`: subject/union + padding, +0.10 duel, +0.20 group, never below `MIN_CROP_SCALE`), hard-rejects cut heads and cut reachable balls (falls back to the lead alone if a duel/group can't fit), scores the rest with `CropScoreWeights` (hand-set until crops are labelled) and returns the top 3
+4. **Output**: `xmp_handler.py` → writes XMP sidecar OR `worker.py` → exports cropped JPEG (`ProcessingResult.alternate_crops` holds the runners-up)
 
 ### Lightroom Classic Plugin Flow
 
@@ -204,7 +219,8 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **167 tests passing** - Crop logic, subject scoring/training, LrC engine and plugin Lua covered
+- **222 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
+- **Sports regression set**: `eval/` (see `docs/research/phase1-results.md` for current numbers)
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list
 
