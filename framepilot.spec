@@ -10,6 +10,7 @@ block_cipher = None
 # Get paths to required packages
 import customtkinter
 import cv2
+import torchvision
 
 customtkinter_path = Path(customtkinter.__path__[0])
 cv2_path = Path(cv2.__file__).parent
@@ -19,6 +20,16 @@ haarcascades_path = Path(cv2.data.haarcascades)
 
 # Project root
 project_root = Path(SPECPATH)
+
+# torchvision's compiled ops (NMS) load via torch.ops.load_library, not import.
+# PyInstaller's hook only asks for torchvision._C, but torchvision 0.29+ ships
+# _C_stable and image_stable instead, so bundle every native library it has.
+torchvision_path = Path(torchvision.__file__).parent
+TORCHVISION_BINARIES = [
+    (str(path), 'torchvision')
+    for pattern in ('*.pyd', '*.dll', '*.so')
+    for path in torchvision_path.glob(pattern)
+]
 
 DETECTION_HIDDEN_IMPORTS = [
     # Ultralytics/YOLO dependencies
@@ -58,7 +69,7 @@ EXCLUDED_MODULES = [
 a = Analysis(
     ['app.py'],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=TORCHVISION_BINARIES,
     datas=[
         # CustomTkinter assets (themes, etc.)
         (str(customtkinter_path), 'customtkinter'),
@@ -122,7 +133,7 @@ exe = EXE(
 engine = Analysis(
     ['engine.py'],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=TORCHVISION_BINARIES,
     datas=[],
     hiddenimports=DETECTION_HIDDEN_IMPORTS,
     hookspath=[],

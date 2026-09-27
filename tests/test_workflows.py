@@ -45,3 +45,12 @@ class TestWindowsBuild:
         runs = "\n".join(step.get("run", "") for step in steps)
         assert r"lightroom\FramePilot.lrplugin dist\FramePilot" in runs
         assert "Compress-Archive" in runs
+
+
+class TestPyInstallerSpec:
+    """The frozen engine needs torchvision's native ops library for YOLO's NMS."""
+
+    def test_torchvision_native_libraries_bundled_in_both_exes(self):
+        spec = (Path(__file__).parent.parent / "framepilot.spec").read_text(encoding="utf-8")
+        assert "torchvision_path.glob(pattern)" in spec
+        assert spec.count("binaries=TORCHVISION_BINARIES") == 2

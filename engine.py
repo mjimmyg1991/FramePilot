@@ -7,11 +7,15 @@ Usage:
     engine --version                      print version details
 """
 
+import os
 import sys
 import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# torchvision swallows failures to load its compiled ops; log them instead
+os.environ.setdefault("TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS", "1")
 
 
 def run(argv: list[str]) -> int:
