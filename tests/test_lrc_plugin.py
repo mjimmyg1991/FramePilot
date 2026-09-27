@@ -94,13 +94,21 @@ class TestCoreJson:
         value = lua.table_from({"path": text})
         assert json.loads(core.encodeJson(value)) == {"path": text}
 
-    def test_utf8_survives_latin1_locale(self, lua, core):
-        # macOS's iscntrl() treats 0x80-0x9F as control characters; a Latin-1
-        # locale reproduces that on Linux (set LOCPATH to a compiled one)
-        if not lua.eval("os.setlocale('en_US.ISO-8859-1', 'ctype') or os.setlocale('en_US.ISO8859-1', 'ctype')"):
-            pytest.skip("no Latin-1 locale available")
+    def test_utf8_survives_locales_where_c_class_matches_high_bytes(self, lua, core):
+        # Lua's %c follows iscntrl(), which matches 0x80-0x9F in some locales:
+        # macOS's UTF-8 locales, or Latin-1 on Linux (set LOCPATH to a compiled one)
+        find_locale = lua.eval("""function(names)
+            for _, name in ipairs(names) do
+                if os.setlocale(name, 'ctype') and string.find(string.char(0x9f), '%c') then
+                    return name
+                end
+            end
+            os.setlocale('C', 'ctype')
+        end""")
+        names = ["", "en_US.UTF-8", "UTF-8", "en_US.ISO8859-1", "en_US.ISO-8859-1"]
+        if not find_locale(lua.table_from(names)):
+            pytest.skip("no locale where %c matches bytes 0x80-0x9F")
         try:
-            assert lua.eval("string.find(string.char(0x9f), '%c')") is not None
             value = lua.eval("{ path = 'Fotos/ÜBER/ß.jpg' }")
             assert json.loads(core.encodeJson(value)) == {"path": "Fotos/ÜBER/ß.jpg"}
         finally:
