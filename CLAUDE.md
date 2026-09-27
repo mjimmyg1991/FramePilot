@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (286 tests)
+# Run tests (293 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -127,7 +127,7 @@ lightroom-subject-crop/
 4. Writes tab-separated results; plugin applies them with `photo:applyDevelopSettings` inside `catalog:withWriteAccessDo`
 5. **Position self-check**: re-renders each cropped photo at 512px and runs `engine --verify`, which compares it (NCC) with the expected region of the pre-crop rendition under every orientation. A mismatch restores the previous crop and logs the orientation used and the best-matching one
 6. **Logs**: each run's job/result/engine.log/plugin.log/verify files go to `%APPDATA%\FramePilot\logs\<timestamp>-<kind>` (last 10 kept); renditions stay in temp
-- **CI**: `tests.yml` (pytest on Linux) and `build.yml` (Windows zip, artifact `FramePilot-Windows`) run on every push and PR; `workflow_dispatch` is not available to sessions
+- **CI**: `tests.yml` (pytest on Linux) and `build.yml` run on every push and PR; `workflow_dispatch` is not available to sessions. `build.yml` makes `FramePilot-Windows` (app + engine) and `FramePilot-macOS` (engine only, arm64, `FRAMEPILOT_ENGINE_ONLY=1`); both smoke-test the frozen engine
 - **Engine lookup**: Plug-in Manager setting → `framepilot-engine(.exe)` next to the plugin folder → `../engine.py` in a source checkout
 - **Skipped**: videos and photos with a non-zero `CropAngle` (rotated crops aren't axis-aligned)
 - **Lua 5.1 only** (Lightroom's embedded Lua): no `goto`, no integer division
@@ -233,7 +233,7 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **286 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
+- **293 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
 - **Sports regression set**: `eval/` (see `docs/research/phase1-results.md` for current numbers)
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list

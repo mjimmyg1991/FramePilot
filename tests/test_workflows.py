@@ -47,6 +47,30 @@ class TestWindowsBuild:
         assert "Compress-Archive" in runs
 
 
+class TestMacBuild:
+    """The macOS build packages the engine and plugin for Lightroom on a Mac."""
+
+    def job(self) -> dict:
+        return load_workflow("build.yml")["jobs"]["build-macos"]
+
+    def test_runs_on_macos(self):
+        assert self.job()["runs-on"].startswith("macos")
+
+    def test_builds_engine_only(self):
+        build = next(step for step in self.job()["steps"] if step.get("name") == "Build engine with PyInstaller")
+        assert build["env"]["FRAMEPILOT_ENGINE_ONLY"] == "1"
+
+    def test_smoke_tests_detection_and_verify(self):
+        runs = "\n".join(step.get("run", "") for step in self.job()["steps"])
+        assert "--version" in runs and "--verify" in runs
+        assert "cp -R lightroom/FramePilot.lrplugin dist/FramePilot/" in runs
+
+    def test_uploads_zip(self):
+        upload = next(step for step in self.job()["steps"] if step.get("uses", "").startswith("actions/upload-artifact"))
+        assert upload["with"]["name"] == "FramePilot-macOS"
+        assert upload["with"]["path"] == "dist/FramePilot-macOS.zip"
+
+
 class TestPyInstallerSpec:
     """The frozen engine needs torchvision's native ops library for YOLO's NMS."""
 
@@ -54,3 +78,7 @@ class TestPyInstallerSpec:
         spec = (Path(__file__).parent.parent / "framepilot.spec").read_text(encoding="utf-8")
         assert "torchvision_path.glob(pattern)" in spec
         assert spec.count("binaries=TORCHVISION_BINARIES") == 2
+
+    def test_engine_only_build_bundles_models_and_config(self):
+        spec = (Path(__file__).parent.parent / "framepilot.spec").read_text(encoding="utf-8")
+        assert "datas=SHARED_DATAS if ENGINE_ONLY else []" in spec

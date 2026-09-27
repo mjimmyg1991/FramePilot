@@ -34,13 +34,14 @@ pip install -r requirements.txt
 Crop photos without leaving Lightroom Classic: select photos, run the plugin, and the crop is applied to them in the catalog.
 
 **Install**
-1. Unzip the FramePilot Windows build. It contains `FramePilot.lrplugin` next to `framepilot-engine.exe`, so keep them together.
+1. Unzip the FramePilot build: `FramePilot-Windows` (the app and engine) or `FramePilot-macOS` (the engine only, for Apple silicon Macs). It contains `FramePilot.lrplugin` next to `framepilot-engine.exe` (Windows) or `framepilot-engine` (Mac), so keep them together.
+   - **Mac:** the build isn't signed, so macOS quarantines it. Move the `FramePilot` folder where you want to keep it, then run `xattr -dr com.apple.quarantine /path/to/FramePilot` in Terminal.
 2. In Lightroom Classic, open **File > Plug-in Manager**, click **Add**, and choose the `FramePilot.lrplugin` folder.
 3. Choose **Library > Plug-in Extras > Check Setup...** (or **File > Plug-in Extras > FramePilot: Check Setup...**, or the button in Plug-in Manager). It finds the engine, runs it on a bundled test photo, and shows the engine's path and version with the result.
 
-Every push to GitHub builds a fresh `FramePilot.zip`: open the latest **Build FramePilot** run under the repository's **Actions** tab and download the `FramePilot-Windows` artifact.
+Every push to GitHub builds fresh zips: open the latest **Build FramePilot** run under the repository's **Actions** tab and download the `FramePilot-Windows` or `FramePilot-macOS` artifact.
 
-When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead. The plugin finds `engine.py` in the repository, and runs it with `python` (`python3` on macOS) unless you set another interpreter in Plug-in Manager.
+When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead. The plugin finds `engine.py` in the repository and runs it with the Python set in Plug-in Manager, else a `.venv` or `venv` next to `engine.py`, else `python` (`python3` on macOS). Lightroom on macOS doesn't see Homebrew or pyenv on its PATH, so use a venv or set the path.
 
 **Use**
 1. Select photos in the Library grid or filmstrip. A collection works well as a queue.
