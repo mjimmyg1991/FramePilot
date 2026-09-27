@@ -89,6 +89,24 @@ class TestSubjectFeatures:
         assert score_subjects([]) == []
 
 
+class TestKitColor:
+    """Tests for sampling a person's shirt colour."""
+
+    def test_red_shirt(self):
+        import numpy as np
+        from src.detector import calculate_kit_color
+        image = np.zeros((200, 100, 3), dtype=np.uint8)
+        image[:, :] = (0, 0, 255)
+        lightness, a, b = calculate_kit_color(image, (0.0, 0.0, 1.0, 1.0))
+        assert 50 < lightness < 56 and a > 70 and b > 60
+
+    def test_tiny_box_has_no_colour(self):
+        import numpy as np
+        from src.detector import calculate_kit_color
+        image = np.zeros((20, 20, 3), dtype=np.uint8)
+        assert calculate_kit_color(image, (0.1, 0.1, 0.2, 0.2)) is None
+
+
 class TestRefereeAndCrowdFeatures:
     """Tests for the signals that separate players from officials and spectators."""
 
