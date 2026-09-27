@@ -36,6 +36,9 @@ Crop photos without leaving Lightroom Classic: select photos, run the plugin, an
 **Install**
 1. Unzip the FramePilot Windows build. It contains `FramePilot.lrplugin` next to `framepilot-engine.exe`, so keep them together.
 2. In Lightroom Classic, open **File > Plug-in Manager**, click **Add**, and choose the `FramePilot.lrplugin` folder.
+3. Choose **Library > Plug-in Extras > Check Setup...** (or **File > Plug-in Extras > FramePilot: Check Setup...**, or the button in Plug-in Manager). It finds the engine, runs it on a bundled test photo, and shows the engine's path and version with the result.
+
+Every push to GitHub builds a fresh `FramePilot.zip`: open the latest **Build FramePilot** run under the repository's **Actions** tab and download the `FramePilot-Windows` artifact.
 
 When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead. The plugin finds `engine.py` in the repository, and runs it with `python` (`python3` on macOS) unless you set another interpreter in Plug-in Manager.
 

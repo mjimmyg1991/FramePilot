@@ -1,4 +1,5 @@
 local LrDialogs = import 'LrDialogs'
+local LrFunctionContext = import 'LrFunctionContext'
 local LrPrefs = import 'LrPrefs'
 local LrView = import 'LrView'
 
@@ -39,6 +40,18 @@ return {
 				f:row {
 					f:static_text { title = 'Python:', alignment = 'right', width = labelWidth },
 					f:edit_field { value = LrView.bind('pythonPath'), width_in_chars = 45 },
+				},
+				f:row {
+					f:static_text { title = '', width = labelWidth },
+					f:push_button {
+						title = 'Check Setup...',
+						action = function()
+							LrFunctionContext.postAsyncTaskWithContext('FramePilot check setup', function(context)
+								LrDialogs.attachErrorDialogToFunctionContext(context)
+								require('FramePilotCheckSetup').run(context)
+							end)
+						end,
+					},
 				},
 			},
 		}

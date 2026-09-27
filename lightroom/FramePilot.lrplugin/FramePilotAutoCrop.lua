@@ -12,73 +12,15 @@ local LrFunctionContext = import 'LrFunctionContext'
 local LrPathUtils = import 'LrPathUtils'
 local LrPrefs = import 'LrPrefs'
 local LrProgressScope = import 'LrProgressScope'
-local LrTasks = import 'LrTasks'
 local LrView = import 'LrView'
 
 local Core = require 'FramePilotCore'
+local Engine = require 'FramePilotEngine'
 
 local AutoCrop = {}
 
 local RENDITION_LONG_EDGE = 2048
 local MAX_LISTED_PHOTOS = 10
-
-local function fileExists(path)
-	return path ~= nil and path ~= '' and LrFileUtils.exists(path) == 'file'
-end
-
-local function readFile(path)
-	local handle = io.open(path, 'r')
-	if not handle then
-		return nil
-	end
-	local text = handle:read('*a')
-	handle:close()
-	return text
-end
-
-local function writeFile(path, text)
-	local handle = assert(io.open(path, 'w'))
-	handle:write(text)
-	handle:close()
-end
-
-local function pythonProgram(prefs)
-	if prefs.pythonPath and prefs.pythonPath ~= '' then
-		return prefs.pythonPath
-	end
-	return WIN_ENV and 'python' or 'python3'
-end
-
--- Finds the engine: the Plug-in Manager setting, then framepilot-engine next
--- to the plugin folder (packaged build), then engine.py in a source checkout.
-function AutoCrop.resolveEngine(prefs)
-	local custom = prefs.enginePath
-	if custom and custom ~= '' then
-		if not fileExists(custom) then
-			return nil, 'The engine set in Plug-in Manager was not found:\n' .. custom
-		end
-		if custom:lower():match('%.py$') then
-			return { pythonProgram(prefs), custom }
-		end
-		return { custom }
-	end
-
-	local installDir = LrPathUtils.parent(_PLUGIN.path)
-	local exeName = WIN_ENV and 'framepilot-engine.exe' or 'framepilot-engine'
-	local packaged = LrPathUtils.child(installDir, exeName)
-	if fileExists(packaged) then
-		return { packaged }
-	end
-
-	local sourceScript = LrPathUtils.child(LrPathUtils.parent(installDir), 'engine.py')
-	if fileExists(sourceScript) then
-		return { pythonProgram(prefs), sourceScript }
-	end
-
-	return nil, 'Could not find the FramePilot engine.\n\n'
-		.. 'Keep FramePilot.lrplugin inside the FramePilot folder, next to '
-		.. exeName .. ', or set the engine location in File > Plug-in Manager.'
-end
 
 local function showSettingsDialog(prefs)
 	return LrFunctionContext.callWithContext('FramePilot settings', function(context)
@@ -219,7 +161,7 @@ function AutoCrop.run(context)
 	end
 
 	local prefs = LrPrefs.prefsForPlugin()
-	local engineArgs, engineError = AutoCrop.resolveEngine(prefs)
+	local engineArgs, engineError = Engine.resolve(prefs)
 	if not engineArgs then
 		LrDialogs.message('FramePilot', engineError, 'critical')
 		return
@@ -309,21 +251,14 @@ function AutoCrop.run(context)
 	local jobPath = LrPathUtils.child(workDir, 'job.json')
 	local resultPath = LrPathUtils.child(workDir, 'result.tsv')
 	local logPath = LrPathUtils.child(workDir, 'engine.log')
-	writeFile(jobPath, Core.encodeJson({ settings = settings, photos = jobPhotos }))
+	Engine.writeFile(jobPath, Core.encodeJson({ settings = settings, photos = jobPhotos }))
 
-	local commandArgs = {}
-	for _, arg in ipairs(engineArgs) do
-		commandArgs[#commandArgs + 1] = arg
-	end
-	commandArgs[#commandArgs + 1] = jobPath
-	commandArgs[#commandArgs + 1] = resultPath
-
-	local exitCode = LrTasks.execute(Core.buildCommand(commandArgs, logPath, WIN_ENV))
-	local resultText = readFile(resultPath)
+	local exitCode = Engine.execute(engineArgs, { jobPath, resultPath }, logPath)
+	local resultText = Engine.readFile(resultPath)
 	if exitCode ~= 0 or not resultText then
 		LrDialogs.message(
 			'FramePilot: the crop engine failed (exit code ' .. tostring(exitCode) .. ').',
-			Core.tail(readFile(logPath), 1500),
+			Core.tail(Engine.readFile(logPath), 1500),
 			'critical'
 		)
 		return

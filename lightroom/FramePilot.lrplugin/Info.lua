@@ -1,10 +1,11 @@
 --[[
 FramePilot for Lightroom Classic.
 
-Adds "Auto-crop Selected Photos..." to Library > Plug-in Extras and
-File > Plug-in Extras. Selected photos are rendered with their edits, the
-FramePilot engine finds the subject, and the crop is applied back to the
-photos in the catalog.
+Adds "Auto-crop Selected Photos..." and "Check Setup..." to Library >
+Plug-in Extras and File > Plug-in Extras. Selected photos are rendered with
+their edits, the FramePilot engine finds the subject, and the crop is applied
+back to the photos in the catalog. Check Setup runs the engine on a bundled
+test photo.
 ]]
 
 return {
@@ -22,6 +23,10 @@ return {
 			file = 'AutoCropMenuItem.lua',
 			enabledWhen = 'photosSelected',
 		},
+		{
+			title = 'Check Setup...',
+			file = 'CheckSetupMenuItem.lua',
+		},
 	},
 
 	LrExportMenuItems = {
@@ -30,7 +35,11 @@ return {
 			file = 'AutoCropMenuItem.lua',
 			enabledWhen = 'photosSelected',
 		},
+		{
+			title = 'FramePilot: Check Setup...',
+			file = 'CheckSetupMenuItem.lua',
+		},
 	},
 
-	VERSION = { major = 0, minor = 1, revision = 0 },
+	VERSION = { major = 0, minor = 2, revision = 0 },
 }

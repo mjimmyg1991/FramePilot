@@ -6,6 +6,9 @@ the module can be tested outside Lightroom.
 
 local Core = {}
 
+-- Keep in step with VERSION in Info.lua.
+Core.PLUGIN_VERSION = '0.2.0'
+
 Core.ASPECT_RATIOS = { '4:5', '9:16', '1:1', '2:3', '3:4', '5:4', '16:9' }
 
 Core.STRATEGIES = {
@@ -183,6 +186,38 @@ end
 -- coordinates, so FramePilot skips them rather than guess.
 function Core.isStraightened(developSettings)
 	return math.abs(tonumber(developSettings.CropAngle) or 0) > 0.001
+end
+
+local function formatCrop(crop)
+	return string.format('left %.3f, top %.3f, right %.3f, bottom %.3f', crop.left, crop.top, crop.right, crop.bottom)
+end
+Core.formatCrop = formatCrop
+
+-- Judges the Check Setup test run. Returns ok and a one-line description.
+function Core.describeCheckResult(result)
+	if not result then
+		return false, 'The engine wrote no result for the test photo.'
+	end
+	if result.status == 'success' then
+		local mode = result.message ~= '' and (' (' .. result.message .. ')') or ''
+		return true, 'Subject found' .. mode .. '; crop ' .. formatCrop(result.crop) .. '.'
+	end
+	if result.status == 'no_subject' then
+		return false, 'No subject found in the test photo, which has four people in it.'
+	end
+	return false, 'Error: ' .. (result.message ~= '' and result.message or result.status)
+end
+
+-- Builds the Check Setup report from labelled lines, skipping empty values.
+function Core.setupReport(lines)
+	local out = {}
+	for _, line in ipairs(lines) do
+		local label, value = line[1], line[2]
+		if value and value ~= '' then
+			out[#out + 1] = label .. ': ' .. value
+		end
+	end
+	return table.concat(out, '\n')
 end
 
 -- Keeps the last maxLength characters of a log for display in a dialog.

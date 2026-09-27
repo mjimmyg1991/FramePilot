@@ -34,6 +34,12 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v
 
+      - name: Record build details
+        shell: pwsh
+        run: |
+          $info = @{ commit = "${{ github.sha }}"; ref = "${{ github.ref_name }}"; run = "${{ github.run_number }}"; date = (Get-Date -Format "yyyy-MM-dd") }
+          $info | ConvertTo-Json | Set-Content -Path config\build_info.json -Encoding utf8
+
       - name: Build with PyInstaller
         run: pyinstaller framepilot.spec --noconfirm --clean
 
@@ -51,8 +57,10 @@ jobs:
       - name: Smoke test engine
         shell: pwsh
         run: |
-          $image = python -c "import os, ultralytics; print(os.path.join(os.path.dirname(ultralytics.__file__), 'assets', 'bus.jpg'))"
-          $job = @{ settings = @{ aspect_ratio = "4:5" }; photos = @(@{ id = "1"; path = $image }) } | ConvertTo-Json -Depth 5
+          & dist\FramePilot\framepilot-engine.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $image = (Resolve-Path dist\FramePilot\FramePilot.lrplugin\check-photo.jpg).Path
+          $job = @{ settings = @{ aspect_ratio = "4:5" }; photos = @(@{ id = "check"; path = $image }) } | ConvertTo-Json -Depth 5
           Set-Content -Path engine-job.json -Value $job
           & dist\FramePilot\framepilot-engine.exe engine-job.json engine-result.tsv
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

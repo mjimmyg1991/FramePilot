@@ -6,6 +6,7 @@ exercised together with the real Python engine.
 """
 
 import json
+import shlex
 from pathlib import Path
 
 import cv2
@@ -15,6 +16,7 @@ import pytest
 lupa_lua51 = pytest.importorskip("lupa.lua51")
 
 from src.detector import Detection, SceneDetections
+from src.engine_info import version_text
 from src.lrc_bridge import run_job
 
 
@@ -162,6 +164,13 @@ class TestCoreDevelopSettings:
         assert not core.isStraightened(lua.eval("{}"))
 
 
+def split_command(command: str) -> tuple[list[str], str]:
+    """Split a POSIX engine command from buildCommand into (args, log path)."""
+    parts = shlex.split(command)
+    redirect = parts.index(">")
+    return parts[:redirect], parts[redirect + 1]
+
+
 FAKE_SDK = r"""
 local fake = {
     messages = {},
@@ -208,7 +217,10 @@ function progress:setCaption() end
 function progress:done() end
 
 local modules = {
-    LrApplication = { activeCatalog = function() return catalog end },
+    LrApplication = {
+        activeCatalog = function() return catalog end,
+        versionString = function() return '14.5 [ 202507031254-fake ]' end,
+    },
     LrBinding = { makePropertyTable = function() return {} end },
     LrDialogs = {
         message = function(message, info, style)
@@ -237,9 +249,14 @@ local modules = {
     LrFileUtils = {
         exists = function(path)
             if path:match('framepilot%-engine') then return fake.engineExists and 'file' or false end
+            local handle = io.open(path, 'r')
+            if handle then handle:close(); return 'file' end
             return false
         end,
-        createAllDirectories = function(path) fake.workDir = path end,
+        createAllDirectories = function(path)
+            fake.workDir = path
+            fake.mkdir(path)
+        end,
         delete = function() end,
     },
     LrFunctionContext = {
@@ -285,6 +302,7 @@ class TestAutoCropFlow:
         fake = lua.execute(FAKE_SDK)
         fake.tempRoot = str(tmp_path)
         fake.prefs = lua.table()
+        fake.mkdir = lambda path: Path(path).mkdir(parents=True, exist_ok=True)
 
         def render(spec, folder):
             if spec.renderFails:
@@ -303,9 +321,12 @@ class TestAutoCropFlow:
                 return SceneDetections(people=people, balls=[], image_size=(0, 0))
 
         def execute(command):
-            parts = command.split("' '")
-            job_path = parts[-2]
-            result_path = parts[-1].split("'")[0]
+            args, log_path = split_command(command)
+            engine_args = args[1:]
+            if engine_args == ["--version"]:
+                Path(log_path).write_text(version_text() + "\n", encoding="utf-8")
+                return 0
+            job_path, result_path = engine_args
             return run_job(job_path, result_path, detector=ByNameDetector())
 
         fake.render = render
@@ -429,7 +450,7 @@ class TestAutoCropFlow:
         fake, auto_crop, _ = harness
 
         def failing_execute(command):
-            log_path = command.split("> '")[1].split("'")[0]
+            _, log_path = split_command(command)
             Path(log_path).write_text("Traceback: model missing", encoding="utf-8")
             return 1
 
@@ -442,3 +463,148 @@ class TestAutoCropFlow:
         assert "exit code 1" in messages[0]["message"]
         assert "model missing" in messages[0]["info"]
         assert len(fake.applied) == 0
+
+
+class TestCheckSetup:
+    """Runs Check Setup against the fake SDK, the real engine and the bundled photo."""
+
+    @pytest.fixture
+    def harness(self, lua, tmp_path):
+        fake = lua.execute(FAKE_SDK)
+        fake.tempRoot = str(tmp_path)
+        fake.prefs = lua.table()
+        fake.mkdir = lambda path: Path(path).mkdir(parents=True, exist_ok=True)
+        lua.execute(f"_PLUGIN = {{ path = [[{PLUGIN_DIR}]] }}")
+
+        state = {"detected": True, "version_exit": 0, "jobs": []}
+
+        class TestPhotoDetector:
+            def detect_scene(self, image_path):
+                people = [
+                    Detection(bbox=(0.05, 0.3, 0.3, 0.95), confidence=0.9, label="person"),
+                ] if state["detected"] else []
+                return SceneDetections(people=people, balls=[], image_size=(0, 0))
+
+        def execute(command):
+            args, log_path = split_command(command)
+            engine_args = args[2:] if args[1].endswith("engine.py") else args[1:]
+            state["engine"] = args[:len(args) - len(engine_args)]
+            if engine_args == ["--version"]:
+                Path(log_path).write_text(version_text() + "\n", encoding="utf-8")
+                return state["version_exit"]
+            job_path, result_path = engine_args
+            state["jobs"].append(json.loads(Path(job_path).read_text(encoding="utf-8")))
+            return run_job(job_path, result_path, detector=TestPhotoDetector())
+
+        fake.execute = execute
+        check_setup = lua.eval("require('FramePilotCheckSetup')")
+        return fake, check_setup, state
+
+    def run(self, lua, check_setup):
+        context = lua.eval("{ addCleanupHandler = function() end }")
+        ok, lines = check_setup.run(context)
+        report = {line[0]: line[1] if len(line) > 1 else None for line in lua_table_to_python(lines)}
+        return ok, report
+
+    def test_passes_and_reports_engine(self, lua, harness):
+        fake, check_setup, state = harness
+
+        ok, report = self.run(lua, check_setup)
+
+        assert ok
+        message = lua_table_to_python(fake.messages)[0]
+        assert message["message"] == "FramePilot is set up correctly."
+        assert message["style"] == "info"
+        assert report["Engine"].endswith("framepilot-engine (next to the plugin)")
+        assert report["Engine version"].startswith("FramePilot engine ")
+        assert report["Test photo"].startswith("Subject found (single); crop left ")
+        assert report["Plugin"] == "0.2.0"
+        assert report["Lightroom"].startswith("14.5")
+        for label in ["Engine", "Engine version", "Test photo", "Plugin"]:
+            assert f"{label}: {report[label]}" in message["info"]
+
+        photo = state["jobs"][0]["photos"][0]
+        assert Path(photo["path"]) == PLUGIN_DIR / "check-photo.jpg"
+        assert photo["orientation"] == "AB"
+
+    def test_no_subject_fails(self, lua, harness):
+        fake, check_setup, state = harness
+        state["detected"] = False
+
+        ok, report = self.run(lua, check_setup)
+
+        assert not ok
+        assert "No subject found" in report["Test photo"]
+        message = lua_table_to_python(fake.messages)[0]
+        assert message["message"] == "FramePilot setup check failed."
+        assert message["style"] == "critical"
+
+    def test_missing_engine_fails(self, lua, harness, tmp_path):
+        fake, check_setup, state = harness
+        fake.engineExists = False
+        lua.execute(f"_PLUGIN = {{ path = [[{tmp_path / 'FramePilot' / 'FramePilot.lrplugin'}]] }}")
+
+        ok, report = self.run(lua, check_setup)
+
+        assert not ok
+        assert "Could not find the FramePilot engine" in report["Engine"]
+        assert state["jobs"] == []
+
+    def test_source_checkout_engine(self, lua, harness):
+        fake, check_setup, state = harness
+        fake.engineExists = False
+        fake.prefs.pythonPath = "/venv/bin/python"
+
+        ok, report = self.run(lua, check_setup)
+
+        assert ok
+        engine_py = PLUGIN_DIR.parent.parent / "engine.py"
+        assert report["Engine"] == f"{engine_py} (source checkout)"
+        assert state["engine"] == ["/venv/bin/python", str(engine_py)]
+
+    def test_engine_that_wont_start_fails(self, lua, harness):
+        fake, check_setup, state = harness
+        state["version_exit"] = 1
+
+        ok, report = self.run(lua, check_setup)
+
+        assert not ok
+        assert "failed to start (exit code 1)" in report["Engine version"]
+        assert state["jobs"] == []
+
+    def test_missing_test_photo_fails(self, lua, harness, tmp_path):
+        fake, check_setup, state = harness
+        lua.execute(f"_PLUGIN = {{ path = [[{tmp_path / 'FramePilot.lrplugin'}]] }}")
+
+        ok, report = self.run(lua, check_setup)
+
+        assert not ok
+        assert "missing from the plugin folder" in report["Test photo"]
+
+    def test_custom_engine_path_is_reported(self, lua, harness):
+        fake, check_setup, _ = harness
+        fake.prefs.enginePath = "/Custom/framepilot-engine"
+
+        ok, report = self.run(lua, check_setup)
+
+        assert ok
+        assert report["Engine"] == "/Custom/framepilot-engine (Plug-in Manager setting)"
+
+
+class TestPluginManifest:
+    """Tests for Info.lua."""
+
+    def test_version_matches_core(self, lua, core):
+        source = (PLUGIN_DIR / "Info.lua").read_text(encoding="utf-8")
+        info = lua.execute(source)
+        version = info.VERSION
+        assert f"{version.major}.{version.minor}.{version.revision}" == core.PLUGIN_VERSION
+
+    def test_check_setup_in_both_menus(self, lua):
+        info = lua.execute((PLUGIN_DIR / "Info.lua").read_text(encoding="utf-8"))
+        library = lua_table_to_python(info.LrLibraryMenuItems)
+        export = lua_table_to_python(info.LrExportMenuItems)
+        assert {"title": "Check Setup...", "file": "CheckSetupMenuItem.lua"} in library
+        assert {"title": "FramePilot: Check Setup...", "file": "CheckSetupMenuItem.lua"} in export
+        for item in library + export:
+            assert (PLUGIN_DIR / item["file"]).exists()
