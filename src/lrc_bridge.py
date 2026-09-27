@@ -9,6 +9,7 @@ the photo's orientation.
 
 import json
 import sys
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -284,6 +285,10 @@ def load_job(job_path: str | Path) -> tuple[LrcJobSettings, list[LrcJobItem]]:
     return settings, items
 
 
+def _format_region(crop: CropRegion) -> str:
+    return f"L{crop.left:.4f} T{crop.top:.4f} R{crop.right:.4f} B{crop.bottom:.4f}"
+
+
 def _clean_field(value: str) -> str:
     return " ".join(value.split())
 
@@ -334,12 +339,26 @@ def run_job(
         model = "yolov8m-seg.pt" if settings.precise else "yolov8m.pt"
         detector = SubjectDetector(yolo_model=model, use_tight_bbox=settings.precise)
 
+    print(
+        f"Job: {len(items)} photo(s), aspect {settings.aspect_ratio[0]}:{settings.aspect_ratio[1]}, "
+        f"strategy {settings.strategy}, padding {settings.padding}, min_scale {settings.min_scale}, "
+        f"precise {settings.precise}",
+        flush=True,
+    )
     results = []
     for item in items:
         try:
-            results.append(process_item(item, detector, settings))
+            result = process_item(item, detector, settings)
         except Exception as e:
-            results.append(LrcJobResult(id=item.id, status="error", message=str(e)))
+            traceback.print_exc()
+            result = LrcJobResult(id=item.id, status="error", message=str(e))
+        results.append(result)
+        crop = _format_region(result.crop) if result.crop else "-"
+        print(
+            f"photo {item.id}: orientation {item.orientation}, current crop {_format_region(item.current_crop)}; "
+            f"{result.status}, crop {crop} {result.message}".rstrip(),
+            flush=True,
+        )
 
     write_results(results, result_path)
     return 0

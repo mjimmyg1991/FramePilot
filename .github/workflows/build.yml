@@ -3,8 +3,11 @@ name: Build FramePilot
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+  pull_request:
+
+concurrency:
+  group: build-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build-windows:
@@ -16,6 +19,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -29,6 +33,12 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+
+      - name: Record build details
+        shell: pwsh
+        run: |
+          $info = @{ commit = "${{ github.sha }}"; ref = "${{ github.ref_name }}"; run = "${{ github.run_number }}"; date = (Get-Date -Format "yyyy-MM-dd") }
+          $info | ConvertTo-Json | Set-Content -Path config\build_info.json -Encoding utf8
 
       - name: Build with PyInstaller
         run: pyinstaller framepilot.spec --noconfirm --clean
@@ -47,13 +57,21 @@ jobs:
       - name: Smoke test engine
         shell: pwsh
         run: |
-          $image = python -c "import os, ultralytics; print(os.path.join(os.path.dirname(ultralytics.__file__), 'assets', 'bus.jpg'))"
-          $job = @{ settings = @{ aspect_ratio = "4:5" }; photos = @(@{ id = "1"; path = $image }) } | ConvertTo-Json -Depth 5
+          & dist\FramePilot\framepilot-engine.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $image = (Resolve-Path dist\FramePilot\FramePilot.lrplugin\check-photo.jpg).Path
+          $job = @{ settings = @{ aspect_ratio = "4:5" }; photos = @(@{ id = "check"; path = $image }) } | ConvertTo-Json -Depth 5
           Set-Content -Path engine-job.json -Value $job
           & dist\FramePilot\framepilot-engine.exe engine-job.json engine-result.tsv
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-Content engine-result.tsv
           if (-not (Select-String -Path engine-result.tsv -Pattern "`tsuccess`t" -Quiet)) { exit 1 }
+          $verify = @{ photos = @(@{ id = "check"; before = $image; after = $image; orientation = "AB" }) } | ConvertTo-Json -Depth 5
+          Set-Content -Path verify-job.json -Value $verify
+          & dist\FramePilot\framepilot-engine.exe --verify verify-job.json verify-result.tsv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content verify-result.tsv
+          if (-not (Select-String -Path verify-result.tsv -Pattern "`tmatch`t" -Quiet)) { exit 1 }
 
       - name: Create ZIP archive
         run: Compress-Archive -Path dist\FramePilot\* -DestinationPath dist\FramePilot.zip
@@ -63,4 +81,66 @@ jobs:
         with:
           name: FramePilot-Windows
           path: dist/FramePilot.zip
+          retention-days: 30
+
+  # Lightroom engine + plugin for Apple silicon Macs (no GUI app).
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Download YOLO models
+        run: |
+          python -c "from ultralytics import YOLO; YOLO('yolov8m.pt'); YOLO('yolov8m-seg.pt')"
+          ls -l *.pt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Record build details
+        run: |
+          python -c "import json, datetime; json.dump({'commit': '${{ github.sha }}', 'ref': '${{ github.ref_name }}', 'run': '${{ github.run_number }}', 'date': datetime.date.today().isoformat()}, open('config/build_info.json', 'w'))"
+
+      - name: Build engine with PyInstaller
+        env:
+          FRAMEPILOT_ENGINE_ONLY: "1"
+        run: pyinstaller framepilot.spec --noconfirm --clean
+
+      - name: Add Lightroom Classic plugin
+        run: cp -R lightroom/FramePilot.lrplugin dist/FramePilot/
+
+      - name: Smoke test engine
+        run: |
+          set -e
+          engine=dist/FramePilot/framepilot-engine
+          image="$PWD/dist/FramePilot/FramePilot.lrplugin/check-photo.jpg"
+          "$engine" --version
+          python -c "import json, sys; json.dump({'settings': {'aspect_ratio': '4:5'}, 'photos': [{'id': 'check', 'path': sys.argv[1]}]}, open('engine-job.json', 'w'))" "$image"
+          "$engine" engine-job.json engine-result.tsv
+          cat engine-result.tsv
+          grep -q "$(printf '\tsuccess\t')" engine-result.tsv
+          python -c "import json, sys; json.dump({'photos': [{'id': 'check', 'before': sys.argv[1], 'after': sys.argv[1], 'orientation': 'AB'}]}, open('verify-job.json', 'w'))" "$image"
+          "$engine" --verify verify-job.json verify-result.tsv
+          cat verify-result.tsv
+          grep -q "$(printf '\tmatch\t')" verify-result.tsv
+
+      - name: Create ZIP archive
+        run: ditto -c -k --keepParent dist/FramePilot dist/FramePilot-macOS.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FramePilot-macOS
+          path: dist/FramePilot-macOS.zip
           retention-days: 30

@@ -2,13 +2,15 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from src import resource_path
+
+if TYPE_CHECKING:
+    from ultralytics import YOLO
 
 
 @dataclass
@@ -228,9 +230,12 @@ class SubjectDetector:
         self._yolo_face_model: YOLO | None = None
 
     @property
-    def yolo_model(self) -> YOLO:
+    def yolo_model(self) -> "YOLO":
         """Lazy-load YOLO model."""
         if self._yolo_model is None:
+            # Imported here so the engine's --version and --verify modes start fast
+            from ultralytics import YOLO
+
             model_path = resource_path(self.yolo_model_name)
             if model_path.exists():
                 self._yolo_model = YOLO(str(model_path))

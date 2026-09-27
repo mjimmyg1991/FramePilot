@@ -6,6 +6,9 @@ the module can be tested outside Lightroom.
 
 local Core = {}
 
+-- Keep in step with VERSION in Info.lua.
+Core.PLUGIN_VERSION = '0.2.0'
+
 Core.ASPECT_RATIOS = { '4:5', '9:16', '1:1', '2:3', '3:4', '5:4', '16:9' }
 
 Core.STRATEGIES = {
@@ -45,8 +48,10 @@ local JSON_ESCAPES = {
 	['\t'] = '\\t',
 }
 
+-- Only ASCII control characters are escaped. Lua's %c follows the C locale,
+-- which on macOS also matches bytes 0x80-0x9F inside UTF-8 letters like Ü or ß.
 local function encodeString(value)
-	local escaped = value:gsub('[%c"\\]', function(char)
+	local escaped = value:gsub('[%z\1-\31"\\]', function(char)
 		return JSON_ESCAPES[char] or string.format('\\u%04x', char:byte())
 	end)
 	return '"' .. escaped .. '"'
@@ -167,6 +172,51 @@ function Core.buildCommand(args, logPath, isWindows)
 	return command
 end
 
+-- Parses the engine's crop position check into a table keyed by photo id.
+-- Each line: id, status, score, best orientation, best score, message.
+function Core.parseVerifyResults(text)
+	local results = {}
+	for line in text:gmatch('[^\r\n]+') do
+		local fields = splitFields(line, '\t')
+		local id, status = fields[1], fields[2]
+		if id and id ~= '' and status then
+			results[id] = {
+				status = status,
+				score = tonumber(fields[3]),
+				bestOrientation = fields[4] or '',
+				bestScore = tonumber(fields[5]),
+				message = fields[6] or '',
+			}
+		end
+	end
+	return results
+end
+
+-- Develop settings that put back the crop a photo had before FramePilot ran.
+function Core.restoreCropSettings(developSettings)
+	local crop = Core.currentCrop(developSettings)
+	local settings = {
+		CropLeft = crop.left,
+		CropTop = crop.top,
+		CropRight = crop.right,
+		CropBottom = crop.bottom,
+	}
+	if type(developSettings.CropConstrainAspectRatio) == 'boolean' then
+		settings.CropConstrainAspectRatio = developSettings.CropConstrainAspectRatio
+	end
+	return settings
+end
+
+-- One line for the summary and log about a crop that didn't land as expected.
+function Core.describeMismatch(orientation, check)
+	local score = check.score and string.format('%.2f', check.score) or 'n/a'
+	local text = string.format('orientation %s scored %s', tostring(orientation), score)
+	if check.bestOrientation ~= '' and check.bestOrientation ~= orientation and check.bestScore then
+		text = text .. string.format('; %s would match (%.2f)', check.bestOrientation, check.bestScore)
+	end
+	return text
+end
+
 -- Returns the photo's current crop in develop coordinates, or the full frame.
 function Core.currentCrop(developSettings)
 	local left = tonumber(developSettings.CropLeft) or 0
@@ -183,6 +233,69 @@ end
 -- coordinates, so FramePilot skips them rather than guess.
 function Core.isStraightened(developSettings)
 	return math.abs(tonumber(developSettings.CropAngle) or 0) > 0.001
+end
+
+local function formatCrop(crop)
+	return string.format('left %.3f, top %.3f, right %.3f, bottom %.3f', crop.left, crop.top, crop.right, crop.bottom)
+end
+Core.formatCrop = formatCrop
+
+-- Judges the Check Setup test run. Returns ok and a one-line description.
+function Core.describeCheckResult(result)
+	if not result then
+		return false, 'The engine wrote no result for the test photo.'
+	end
+	if result.status == 'success' then
+		local mode = result.message ~= '' and (' (' .. result.message .. ')') or ''
+		return true, 'Subject found' .. mode .. '; crop ' .. formatCrop(result.crop) .. '.'
+	end
+	if result.status == 'no_subject' then
+		return false, 'No subject found in the test photo, which has four people in it.'
+	end
+	return false, 'Error: ' .. (result.message ~= '' and result.message or result.status)
+end
+
+-- Builds the Check Setup report from labelled lines, skipping empty values.
+function Core.setupReport(lines)
+	local out = {}
+	for _, line in ipairs(lines) do
+		local label, value = line[1], line[2]
+		if value and value ~= '' then
+			out[#out + 1] = label .. ': ' .. value
+		end
+	end
+	return table.concat(out, '\n')
+end
+
+-- Number of runs whose job, results and logs are kept in the log folder.
+Core.KEEP_RUNS = 10
+
+local RUN_FOLDER_PATTERN = '^%d%d%d%d%d%d%d%d%-%d%d%d%d%d%d%-'
+
+-- Name of a run's log folder, e.g. 20260927-141503-autocrop. Names sort by time.
+function Core.runFolderName(timestamp, kind, attempt)
+	local name = timestamp .. '-' .. kind
+	if attempt and attempt > 1 then
+		name = name .. '-' .. attempt
+	end
+	return name
+end
+
+-- Given the names in the log folder, returns the run folders to delete so
+-- that `keep` remain. Anything not named like a run folder is left alone.
+function Core.runsToPrune(names, keep)
+	local runs = {}
+	for _, name in ipairs(names) do
+		if name:match(RUN_FOLDER_PATTERN) then
+			runs[#runs + 1] = name
+		end
+	end
+	table.sort(runs)
+	local prune = {}
+	for i = 1, #runs - keep do
+		prune[#prune + 1] = runs[i]
+	end
+	return prune
 end
 
 -- Keeps the last maxLength characters of a log for display in a dialog.

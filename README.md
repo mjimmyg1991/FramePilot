@@ -34,10 +34,14 @@ pip install -r requirements.txt
 Crop photos without leaving Lightroom Classic: select photos, run the plugin, and the crop is applied to them in the catalog.
 
 **Install**
-1. Unzip the FramePilot Windows build. It contains `FramePilot.lrplugin` next to `framepilot-engine.exe`, so keep them together.
+1. Unzip the FramePilot build: `FramePilot-Windows` (the app and engine) or `FramePilot-macOS` (the engine only, for Apple silicon Macs). It contains `FramePilot.lrplugin` next to `framepilot-engine.exe` (Windows) or `framepilot-engine` (Mac), so keep them together.
+   - **Mac:** the build isn't signed, so macOS quarantines it. Move the `FramePilot` folder where you want to keep it, then run `xattr -dr com.apple.quarantine /path/to/FramePilot` in Terminal.
 2. In Lightroom Classic, open **File > Plug-in Manager**, click **Add**, and choose the `FramePilot.lrplugin` folder.
+3. Choose **Library > Plug-in Extras > Check Setup...** (or **File > Plug-in Extras > FramePilot: Check Setup...**, or the button in Plug-in Manager). It finds the engine, runs it on a bundled test photo, and shows the engine's path and version with the result.
 
-When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead. The plugin finds `engine.py` in the repository, and runs it with `python` (`python3` on macOS) unless you set another interpreter in Plug-in Manager.
+Every push to GitHub builds fresh zips: open the latest **Build FramePilot** run under the repository's **Actions** tab and download the `FramePilot-Windows` or `FramePilot-macOS` artifact.
+
+When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead. The plugin finds `engine.py` in the repository and runs it with the Python set in Plug-in Manager, else a `.venv` or `venv` next to `engine.py`, else `python` (`python3` on macOS). Lightroom on macOS doesn't see Homebrew or pyenv on its PATH, so use a venv or set the path.
 
 **Use**
 1. Select photos in the Library grid or filmstrip. A collection works well as a queue.
@@ -55,6 +59,10 @@ When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead
 - Each crop is a normal develop history step: undo it with **Edit > Undo** or adjust it with the Crop tool.
 - To keep the original framing, create virtual copies first and crop those.
 - Photos with a straightened or rotated crop (a non-zero crop angle) and videos are skipped and listed in the summary.
+- After cropping, each photo is rendered again, small, and compared with the region of the original rendition the crop was meant to show. If they don't match (for example the photo's rotation was read the wrong way), the previous crop is put back and the photo is listed as "Crop didn't land where expected"; the run's log records the photo's orientation and the orientation that would have matched. Turn this off with the checkbox in the crop dialog.
+
+**Logs**
+Each run keeps its `job.json`, `result.tsv`, `engine.log` and `plugin.log` in its own folder under `%APPDATA%\FramePilot\logs` on Windows (`~/Library/Application Support/FramePilot/logs` on macOS). The last 10 runs are kept. The summary and error dialogs name the run's folder, and Plug-in Manager has a **Show Logs** button. Zip the folder to report a problem.
 
 ### Smart Select for sports
 

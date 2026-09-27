@@ -32,3 +32,4 @@ config/local_config.yaml
 # PyInstaller
 build/
 dist/
+/config/build_info.json
