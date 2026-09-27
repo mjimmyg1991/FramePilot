@@ -48,6 +48,12 @@ class TrainingExample:
     label_index: int
     people: list[Detection] = field(default_factory=list)
     balls: list[Detection] = field(default_factory=list)
+    mode: str = "single"
+    member_indices: list[int] = field(default_factory=list)
+
+    def is_hit(self, index: int) -> bool:
+        """True if the index is the labelled subject or, for a duel or group, one of its members."""
+        return index == self.label_index or index in self.member_indices
 
 
 def iou(a: tuple[float, ...], b: tuple[float, ...]) -> float:
@@ -120,12 +126,15 @@ def build_examples(
         if index is None:
             unmatched.append(name)
             continue
+        members = [match_label(scene.people, tuple(box)) for box in label.get("members", [])]
         examples.append(TrainingExample(
             name=name,
             features=subject_features(scene.people, scene.balls, scene.image_size),
             label_index=index,
             people=scene.people,
             balls=scene.balls,
+            mode=label.get("mode", "single"),
+            member_indices=sorted({m for m in members if m is not None}),
         ))
     return examples, unmatched
 
@@ -136,10 +145,21 @@ def predict(example: TrainingExample, weights: SubjectWeights) -> int:
 
 
 def accuracy(examples: list[TrainingExample], weights: SubjectWeights) -> float:
-    """Fraction of examples where the labelled person is selected."""
+    """Fraction of examples where the subject (or a duel/group member) is selected."""
     if not examples:
         return 0.0
-    return sum(predict(ex, weights) == ex.label_index for ex in examples) / len(examples)
+    return sum(ex.is_hit(predict(ex, weights)) for ex in examples) / len(examples)
+
+
+def _stack(examples: list[TrainingExample]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """All people's features in one matrix, each photo's start row, and a target mask."""
+    features = np.vstack([ex.features for ex in examples])
+    starts = np.cumsum([0] + [len(ex.features) for ex in examples[:-1]])
+    targets = np.zeros(len(features), dtype=bool)
+    for start, ex in zip(starts, examples):
+        for index in set(ex.member_indices) | {ex.label_index}:
+            targets[start + index] = True
+    return features, starts, targets
 
 
 def fit_weights(
@@ -151,8 +171,9 @@ def fit_weights(
 ) -> SubjectWeights:
     """Fit weights by maximizing the softmax likelihood of the labelled people.
 
-    The L2 term pulls weights towards ``initial``, so small label sets refine
-    the defaults rather than replacing them.
+    For a duel or group, probability on any labelled member counts. The L2
+    term pulls weights towards ``initial``, so small label sets refine the
+    defaults rather than replacing them.
 
     Args:
         examples: Labelled photos
@@ -164,18 +185,21 @@ def fit_weights(
     Returns:
         Fitted SubjectWeights
     """
-    prior = initial.as_vector()
-    weights = prior.copy()
     if not examples:
         return initial
+    prior = initial.as_vector()
+    weights = prior.copy()
+    features, starts, targets = _stack(examples)
+    sizes = np.diff(np.append(starts, len(features)))
 
     for _ in range(iterations):
-        gradient = np.zeros_like(weights)
-        for ex in examples:
-            scores = ex.features @ weights
-            probs = np.exp(scores - scores.max())
-            probs /= probs.sum()
-            gradient += ex.features[ex.label_index] - probs @ ex.features
+        scores = features @ weights
+        scores -= np.repeat(np.maximum.reduceat(scores, starts), sizes)
+        exp = np.exp(scores)
+        probs = exp / np.repeat(np.add.reduceat(exp, starts), sizes)
+        target_probs = probs * targets
+        target_share = target_probs / np.repeat(np.add.reduceat(target_probs, starts), sizes)
+        gradient = (target_share - probs) @ features
         # Implicit step for the L2 pull, stable for any l2 * learning_rate
         weights = (weights + learning_rate * (gradient / len(examples) + l2 * prior)) / (
             1 + learning_rate * l2
@@ -184,23 +208,69 @@ def fit_weights(
     return SubjectWeights.from_vector(weights)
 
 
+def summarize(
+    examples: list[TrainingExample],
+    weights: SubjectWeights | None = None,
+    predictions: list[int] | None = None,
+) -> dict[str, tuple[int, int]]:
+    """Hits and totals overall and per labelled mode.
+
+    "strict" counts the exact labelled subject; the other rows accept any
+    labelled member of a duel or group.
+
+    Args:
+        examples: Labelled photos
+        weights: Weights to predict with (when predictions aren't given)
+        predictions: Precomputed picks, e.g. from cross_validated_predictions
+
+    Returns:
+        Dict of name -> (hits, total)
+    """
+    if predictions is None:
+        predictions = [predict(ex, weights or SubjectWeights()) for ex in examples]
+    rows: dict[str, tuple[int, int]] = {}
+
+    def add(key: str, hit: bool) -> None:
+        hits, total = rows.get(key, (0, 0))
+        rows[key] = (hits + int(hit), total + 1)
+
+    for ex, picked in zip(examples, predictions):
+        add("strict", picked == ex.label_index)
+        add("any_member", ex.is_hit(picked))
+        add(ex.mode, ex.is_hit(picked))
+    return rows
+
+
+def cross_validated_predictions(
+    examples: list[TrainingExample],
+    initial: SubjectWeights,
+    folds: int = 5,
+    **fit_options: float,
+) -> list[int]:
+    """Pick for each photo using weights fitted on the other folds."""
+    predictions = [0] * len(examples)
+    if len(examples) < 2:
+        return [predict(ex, initial) for ex in examples]
+    folds = min(folds, len(examples))
+    for k in range(folds):
+        training = [ex for i, ex in enumerate(examples) if i % folds != k]
+        fitted = fit_weights(training, initial, **fit_options)
+        for i in range(k, len(examples), folds):
+            predictions[i] = predict(examples[i], fitted)
+    return predictions
+
+
 def cross_validate(
     examples: list[TrainingExample],
     initial: SubjectWeights,
     folds: int = 5,
     **fit_options: float,
 ) -> float:
-    """Held-out accuracy of fitting on the other folds (leave-one-out if few)."""
-    if len(examples) < 2:
-        return accuracy(examples, initial)
-    folds = min(folds, len(examples))
-    correct = 0
-    for k in range(folds):
-        held_out = examples[k::folds]
-        training = [ex for i, ex in enumerate(examples) if i % folds != k]
-        fitted = fit_weights(training, initial, **fit_options)
-        correct += sum(predict(ex, fitted) == ex.label_index for ex in held_out)
-    return correct / len(examples)
+    """Held-out hit rate of fitting on the other folds (leave-one-out if few)."""
+    if not examples:
+        return 0.0
+    predictions = cross_validated_predictions(examples, initial, folds, **fit_options)
+    return sum(ex.is_hit(p) for ex, p in zip(examples, predictions)) / len(examples)
 
 
 def _draw_people(
@@ -301,14 +371,21 @@ def evaluate(
     folder: Annotated[Path, typer.Argument(help="Folder with photos and subjects.json")],
     weights_file: Annotated[Optional[Path], typer.Option("--weights", help="Weights JSON to test")] = None,
     report: Annotated[Optional[Path], typer.Option(help="Folder for annotated images of misses")] = None,
+    cross_validated: Annotated[bool, typer.Option(
+        "--cross-validate", help="Also report held-out accuracy of training on the other folds")] = False,
+    l2: Annotated[float, typer.Option(help="Pull towards the current weights when cross-validating")] = 0.05,
 ) -> None:
     """Report how often Smart Select picks the labelled subject."""
     weights = load_subject_weights(weights_file)
     examples, unmatched = build_examples(folder, load_labels(folder), SubjectDetector())
     _print_dataset_summary(examples, unmatched)
-    typer.echo(f"Accuracy: {accuracy(examples, weights):.0%} on {len(examples)} multi-person photo(s)")
+    typer.echo("Current weights:")
+    _print_summary(summarize(examples, weights))
+    if cross_validated:
+        typer.echo("Trained on other folds, held-out photos:")
+        _print_summary(summarize(examples, predictions=cross_validated_predictions(examples, weights, l2=l2)))
 
-    misses = [ex for ex in examples if predict(ex, weights) != ex.label_index]
+    misses = [ex for ex in examples if not ex.is_hit(predict(ex, weights))]
     for ex in misses:
         typer.echo(f"  miss: {ex.name} (picked #{predict(ex, weights)}, labelled #{ex.label_index})")
     if report and misses:
@@ -356,6 +433,20 @@ def train(
         "l2": l2,
     })
     typer.echo(f"Saved weights to {output}")
+
+
+def _print_summary(rows: dict[str, tuple[int, int]]) -> None:
+    labels = {
+        "strict": "Exact labelled subject",
+        "any_member": "Subject or duel/group member",
+        "single": "  single",
+        "duel": "  duel",
+        "group": "  group",
+    }
+    for key in ["strict", "any_member", "single", "duel", "group"]:
+        if key in rows:
+            hits, total = rows[key]
+            typer.echo(f"{labels[key]:30s} {hits:4d}/{total:<4d} {hits / total:6.1%}")
 
 
 def _print_dataset_summary(examples: list[TrainingExample], unmatched: list[str]) -> None:

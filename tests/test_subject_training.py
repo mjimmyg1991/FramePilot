@@ -12,12 +12,14 @@ from src.subject_training import (
     box_at_point,
     build_examples,
     cross_validate,
+    cross_validated_predictions,
     fit_weights,
     iou,
     load_labels,
     match_label,
     predict,
     save_labels,
+    summarize,
 )
 
 
@@ -95,11 +97,62 @@ class TestTraining:
         start = SubjectWeights(**{name: 0.0 for name in SubjectWeights.names()})
         assert cross_validate(examples, start, folds=5, l2=0.01) >= 0.9
 
+    def test_duel_members_all_count_as_targets(self):
+        # The labelled subject has no distinguishing feature, but it and its
+        # duel partner share one; fitting should learn that feature
+        column = SubjectWeights.names().index("ball_holder")
+        examples = []
+        for i in range(30):
+            features = np.zeros((3, len(SubjectWeights.names())))
+            features[1, column] = 1.0
+            features[2, column] = 1.0
+            examples.append(TrainingExample(name=f"{i}.jpg", features=features, label_index=2,
+                                            mode="duel", member_indices=[1, 2]))
+        start = SubjectWeights(**{name: 0.0 for name in SubjectWeights.names()})
+        fitted = fit_weights(examples, start, l2=0.01)
+        assert fitted.ball_holder > 1.0
+        assert accuracy(examples, fitted) == pytest.approx(1.0)
+
+    def test_cross_validated_predictions_align_with_examples(self):
+        examples = synthetic_examples(12, "size", seed=5)
+        start = SubjectWeights(**{name: 0.0 for name in SubjectWeights.names()})
+        predictions = cross_validated_predictions(examples, start, folds=4, l2=0.01)
+        assert len(predictions) == 12
+        assert sum(p == ex.label_index for p, ex in zip(predictions, examples)) >= 11
+
     def test_predict(self):
         features = np.zeros((2, len(SubjectWeights.names())))
         features[1, SubjectWeights.names().index("size")] = 1.0
         example = TrainingExample(name="x.jpg", features=features, label_index=1)
         assert predict(example, SubjectWeights()) == 1
+
+
+class TestSummarize:
+    """Tests for the per-mode evaluation report."""
+
+    def example(self, picked_feature_row: int, label: int, mode: str, members: list[int]):
+        features = np.zeros((3, len(SubjectWeights.names())))
+        features[picked_feature_row, SubjectWeights.names().index("size")] = 1.0
+        return TrainingExample(name="x.jpg", features=features, label_index=label,
+                               mode=mode, member_indices=members)
+
+    def test_member_counts_for_duel_but_not_strict(self):
+        examples = [
+            self.example(0, 0, "single", []),
+            self.example(1, 0, "single", []),
+            self.example(1, 0, "duel", [0, 1]),
+            self.example(2, 0, "group", [0, 1]),
+        ]
+        rows = summarize(examples, SubjectWeights())
+        assert rows["strict"] == (1, 4)
+        assert rows["any_member"] == (2, 4)
+        assert rows["single"] == (1, 2)
+        assert rows["duel"] == (1, 1)
+        assert rows["group"] == (0, 1)
+
+    def test_is_hit(self):
+        ex = TrainingExample(name="x.jpg", features=np.zeros((3, 1)), label_index=2, member_indices=[0, 2])
+        assert ex.is_hit(2) and ex.is_hit(0) and not ex.is_hit(1)
 
 
 class TestBuildExamples:
@@ -120,7 +173,8 @@ class TestBuildExamples:
                 return SceneDetections(people=scenes[path.name], balls=[], image_size=(60, 40))
 
         labels = {
-            "pair.jpg": {"bbox": [0.5, 0.1, 0.7, 0.9]},
+            "pair.jpg": {"bbox": [0.5, 0.1, 0.7, 0.9], "mode": "duel",
+                         "members": [[0.5, 0.1, 0.7, 0.9], [0.1, 0.1, 0.3, 0.9], [0.8, 0.8, 0.9, 0.9]]},
             "solo.jpg": {"bbox": [0.1, 0.1, 0.3, 0.9]},
             "wrong.jpg": {"bbox": [0.85, 0.1, 0.95, 0.9]},
             "skipped.jpg": {"skip": "no clear subject"},
@@ -131,5 +185,7 @@ class TestBuildExamples:
 
         assert [ex.name for ex in examples] == ["pair.jpg"]
         assert examples[0].label_index == 1
+        assert examples[0].mode == "duel"
+        assert examples[0].member_indices == [0, 1]
         assert examples[0].features.shape == (2, len(SubjectWeights.names()))
         assert unmatched == ["wrong.jpg"]
