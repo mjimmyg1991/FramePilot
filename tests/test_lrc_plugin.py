@@ -8,6 +8,7 @@ exercised together with the real Python engine.
 import contextlib
 import json
 import shlex
+import shutil
 from pathlib import Path
 
 import cv2
@@ -18,7 +19,11 @@ lupa_lua51 = pytest.importorskip("lupa.lua51")
 
 from src.detector import Detection, SceneDetections
 from src.engine_info import version_text
+from src.crop_calculator import CropRegion
 from src.lrc_bridge import run_job
+from src.lrc_verify import run_verify
+from tests.lr_simulation import render as lr_render
+from tests.lr_simulation import textured_image
 
 
 PLUGIN_DIR = Path(__file__).parent.parent / "lightroom" / "FramePilot.lrplugin"
@@ -187,6 +192,7 @@ def install_file_system(lua, fake, tmp_path):
         elif path.exists():
             path.unlink()
 
+    fake.copy = lambda source, destination: shutil.copyfile(source, destination)
     fake.pathKind = path_kind
     fake.listDir = list_dir
     fake.remove = remove
@@ -229,12 +235,16 @@ local function makePhoto(spec)
         if key == 'copyName' then return spec.copyName end
     end
     function photo:getDevelopSettings()
-        return spec.develop or {}
+        local copy = {}
+        for key, value in pairs(spec.develop or {}) do copy[key] = value end
+        return copy
     end
     function photo:applyDevelopSettings(settings, historyName)
         assert(fake.inWriteAccess, 'applyDevelopSettings outside withWriteAccessDo')
-        fake.applied[spec.id] = settings
+        if not fake.applied[spec.id] then fake.applied[spec.id] = settings end
         fake.history[spec.id] = historyName
+        spec.develop = spec.develop or {}
+        for key, value in pairs(settings) do spec.develop[key] = value end
     end
     return photo
 end
@@ -276,7 +286,9 @@ local modules = {
                 if not photo then return nil end
                 local rendition = { photo = photo }
                 function rendition:waitForRender()
-                    return fake.render(photo._spec, params.exportSettings.LR_export_destinationPathPrefix)
+                    local settings = params.exportSettings
+                    return fake.render(photo._spec, settings.LR_export_destinationPathPrefix,
+                        settings.LR_size_maxWidth, photo:getDevelopSettings())
                 end
                 return i, rendition
             end
@@ -301,6 +313,7 @@ local modules = {
             return function() i = i + 1; return entries[i] end
         end,
         delete = function(path) fake.remove(path) end,
+        copy = function(source, destination) fake.copy(source, destination) end,
     },
     LrFunctionContext = {
         callWithContext = function(_, fn) return fn({ addCleanupHandler = function() end }) end,
@@ -347,12 +360,22 @@ def make_auto_crop_harness(lua, tmp_path):
     install_file_system(lua, fake, tmp_path)
     fake.prefs = lua.table()
 
-    def render(spec, folder):
+    def render(spec, folder, long_edge, develop):
         if spec.renderFails:
             return False, "Source file is missing"
         path = Path(folder) / f"{spec.name}.jpg"
         path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(path), np.zeros((spec.height or 400, spec.width or 600, 3), dtype=np.uint8))
+        crop = CropRegion(
+            left=develop.CropLeft or 0.0, right=develop.CropRight or 1.0,
+            top=develop.CropTop or 0.0, bottom=develop.CropBottom or 1.0,
+        )
+        orientation = spec.trueOrientation or develop.orientation or "AB"
+        if spec.stored:
+            stored = cv2.imread(spec.stored)
+        else:
+            stored = np.zeros((spec.height or 400, spec.width or 600, 3), dtype=np.uint8)
+        image = lr_render(stored, crop, orientation, long_edge)
+        cv2.imwrite(str(path), image)
         return True, str(path)
 
     subjects = {}
@@ -369,6 +392,12 @@ def make_auto_crop_harness(lua, tmp_path):
         if engine_args == ["--version"]:
             Path(log_path).write_text(version_text() + "\n", encoding="utf-8")
             return 0
+        if engine_args[0] == "--verify":
+            fake.verifyCalls = (fake.verifyCalls or 0) + 1
+            if fake.verifyExit:
+                return fake.verifyExit
+            with open(log_path, "w", encoding="utf-8") as log, contextlib.redirect_stdout(log):
+                return run_verify(*engine_args[1:])
         job_path, result_path = engine_args
         with open(log_path, "w", encoding="utf-8") as log, contextlib.redirect_stdout(log):
             return run_job(job_path, result_path, detector=ByNameDetector())
@@ -438,10 +467,12 @@ class TestAutoCropFlow:
 
         self.run(lua, auto_crop)
 
+        # BC shows the 600x400 stored pixels as a 400x600 portrait; a full-width
+        # 4:5 crop of it spans the stored height and 5/6 of the stored width
         crop = lua_table_to_python(fake.applied[1])
-        assert crop["CropLeft"] == pytest.approx(0.0)
-        assert crop["CropRight"] == pytest.approx(1.0)
         assert crop["CropTop"] == pytest.approx(0.0)
+        assert crop["CropBottom"] == pytest.approx(1.0)
+        assert crop["CropRight"] - crop["CropLeft"] == pytest.approx(5 / 6, abs=1e-3)
 
     def test_settings_saved_and_sent_to_engine(self, lua, harness, tmp_path):
         fake, auto_crop, subjects = harness
@@ -603,6 +634,141 @@ class TestRunLogs:
 
         names = sorted(p.name for p in log_root(tmp_path).iterdir())
         assert names == ["20260927-101010-autocrop", "20260927-101010-autocrop-2"]
+
+
+class TestCropPositionCheck:
+    """After cropping, each photo is rendered again and compared with the pre-crop rendition."""
+
+    @pytest.fixture
+    def harness(self, lua, tmp_path):
+        return make_auto_crop_harness(lua, tmp_path)
+
+    @pytest.fixture
+    def stored(self, tmp_path):
+        path = tmp_path / "stored.png"
+        cv2.imwrite(str(path), textured_image(900, 600, seed=7))
+        return str(path)
+
+    def add_rotated(self, lua, fake, subjects, stored, develop_orientation, true_orientation, **develop):
+        # Subject near the top of the portrait display, so the crop is off-centre
+        subjects["rotated"] = (0.3, 0.02, 0.7, 0.3)
+        add_photo(
+            lua, fake, id=1, name="rotated", stored=stored, trueOrientation=true_orientation,
+            develop=lua.table_from({"orientation": develop_orientation, **develop}),
+        )
+
+    def test_crop_that_lands_is_kept(self, lua, harness, stored, tmp_path):
+        fake, auto_crop, subjects = harness
+        self.add_rotated(lua, fake, subjects, stored, "DA", "DA")
+
+        run_auto_crop(lua, auto_crop)
+
+        assert fake.history[1] == "FramePilot 4:5"
+        summary = lua_table_to_python(fake.messages)[0]
+        assert summary["message"] == "Cropped 1 photo to 4:5."
+        assert "didn't land" not in summary["info"]
+        assert "couldn't be checked" not in summary["info"]
+        (run_dir,) = run_folders(tmp_path, "autocrop")
+        assert {"verify.json", "verify.tsv", "verify.log"} <= {p.name for p in run_dir.iterdir()}
+        assert "crop landed where expected (orientation DA" in (run_dir / "plugin.log").read_text(encoding="utf-8")
+        verify_job = json.loads((run_dir / "verify.json").read_text(encoding="utf-8"))
+        assert verify_job["photos"][0]["orientation"] == "DA"
+
+    def test_misplaced_crop_is_restored_and_reported(self, lua, harness, stored, tmp_path):
+        fake, auto_crop, subjects = harness
+        # The catalog says BC, but Lightroom actually displays the photo as DA
+        self.add_rotated(lua, fake, subjects, stored, "BC", "DA")
+
+        run_auto_crop(lua, auto_crop)
+
+        photo = fake.photos[1]
+        develop = lua_table_to_python(photo.getDevelopSettings(photo))
+        assert (develop["CropLeft"], develop["CropTop"], develop["CropRight"], develop["CropBottom"]) == (0, 0, 1, 1)
+        assert fake.history[1] == "FramePilot: restored crop"
+
+        summary = lua_table_to_python(fake.messages)[0]
+        assert summary["message"] == "Cropped 0 photos to 4:5."
+        assert summary["style"] == "warning"
+        assert "Crop didn't land where expected, so the previous crop was put back (1)" in summary["info"]
+        assert "rotated: orientation BC scored" in summary["info"]
+        assert "DA would match" in summary["info"]
+
+        (run_dir,) = run_folders(tmp_path, "autocrop")
+        plugin_log = (run_dir / "plugin.log").read_text(encoding="utf-8")
+        assert "develop orientation BC, best matching orientation DA" in plugin_log
+        assert "orientation used BC, best DA" in (run_dir / "verify.log").read_text(encoding="utf-8")
+        assert (run_dir / "photo-1-before.jpg").exists()
+        assert (run_dir / "photo-1-after.jpg").exists()
+
+    def test_restore_puts_back_existing_crop(self, lua, harness, stored):
+        fake, auto_crop, subjects = harness
+        previous = {"CropLeft": 0.05, "CropTop": 0.1, "CropRight": 0.95, "CropBottom": 0.9,
+                    "CropConstrainAspectRatio": False}
+        self.add_rotated(lua, fake, subjects, stored, "BC", "DA", **previous)
+
+        run_auto_crop(lua, auto_crop)
+
+        photo = fake.photos[1]
+        develop = lua_table_to_python(photo.getDevelopSettings(photo))
+        for key, value in previous.items():
+            assert develop[key] == pytest.approx(value)
+
+    def test_check_can_be_turned_off(self, lua, harness, stored):
+        fake, auto_crop, subjects = harness
+        fake.prefs.verifyCrops = False
+        self.add_rotated(lua, fake, subjects, stored, "BC", "DA")
+
+        run_auto_crop(lua, auto_crop)
+
+        assert fake.verifyCalls is None
+        assert fake.history[1] == "FramePilot 4:5"
+
+    def test_failed_check_keeps_crop_and_says_so(self, lua, harness, stored):
+        fake, auto_crop, subjects = harness
+        fake.verifyExit = 1
+        self.add_rotated(lua, fake, subjects, stored, "DA", "DA")
+
+        run_auto_crop(lua, auto_crop)
+
+        assert fake.history[1] == "FramePilot 4:5"
+        summary = lua_table_to_python(fake.messages)[0]
+        assert summary["message"] == "Cropped 1 photo to 4:5."
+        assert "Cropped, but the crop position couldn't be checked (1)" in summary["info"]
+        assert "see verify.log" in summary["info"]
+
+    def test_featureless_photo_is_kept_but_listed(self, lua, harness):
+        fake, auto_crop, subjects = harness
+        subjects["plain"] = (0.45, 0.1, 0.55, 0.9)
+        add_photo(lua, fake, id=1, name="plain")
+
+        run_auto_crop(lua, auto_crop)
+
+        assert fake.history[1] == "FramePilot 4:5"
+        summary = lua_table_to_python(fake.messages)[0]
+        assert "plain: Too little detail to check the crop position" in summary["info"]
+
+
+class TestCoreVerifyResults:
+    """Tests for parsing the position check and describing mismatches."""
+
+    def test_parse(self, core):
+        text = (
+            "1\tmatch\t0.9912\tAB\t0.9912\tCrop landed where expected\n"
+            "2\tmismatch\t-1.0000\tDA\t0.9800\tCrop didn't land\r\n"
+            "3\tinconclusive\t\tAB\t0.1000\tToo little detail\n"
+        )
+        results = lua_table_to_python(core.parseVerifyResults(text))
+        assert results["1"]["score"] == pytest.approx(0.9912)
+        assert results["2"]["bestOrientation"] == "DA"
+        assert "score" not in results["3"]
+
+    def test_describe_mismatch(self, lua, core):
+        check = lua.table_from({"score": -1.0, "bestOrientation": "DA", "bestScore": 0.98})
+        assert core.describeMismatch("BC", check) == "orientation BC scored -1.00; DA would match (0.98)"
+
+    def test_restore_settings_default_to_full_frame(self, lua, core):
+        settings = lua_table_to_python(core.restoreCropSettings(lua.eval("{ orientation = 'BC' }")))
+        assert settings == {"CropLeft": 0, "CropTop": 0, "CropRight": 1, "CropBottom": 1}
 
 
 class TestCoreRunFolders:

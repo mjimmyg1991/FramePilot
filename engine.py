@@ -3,6 +3,7 @@
 
 Usage:
     engine JOB_JSON RESULT_TSV            crop the photos in a job
+    engine --verify JOB_JSON RESULT_TSV   check where applied crops landed
     engine --version                      print version details
 """
 
@@ -15,13 +16,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 def run(argv: list[str]) -> int:
     """Dispatch to the requested engine mode."""
-    if argv[:1] == ["--version"]:
-        from src.engine_info import version_text
+    from src.engine_info import version_text
 
+    if argv[:1] == ["--version"]:
         print(version_text())
         return 0
 
-    from src.engine_info import version_text
+    if argv[:1] == ["--verify"]:
+        from src.lrc_verify import main as verify_main
+
+        print(version_text().splitlines()[0] + " (crop position check)", flush=True)
+        return verify_main(argv[1:])
+
     from src.lrc_bridge import main
 
     print(version_text().splitlines()[0], flush=True)

@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (222 tests)
+# Run tests (285 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -29,6 +29,8 @@ python -m src.main process <path> --dry-run
 
 # Lightroom Classic plugin engine (normally run by the plugin)
 python engine.py <job.json> <result.tsv>
+python engine.py --verify <verify.json> <verify.tsv>   # crop position self-check
+python engine.py --version
 
 # Smart Select: label your photos, measure accuracy, fit weights
 python -m src.subject_training label <photo_folder>
@@ -64,6 +66,8 @@ lightroom-subject-crop/
 │   ├── presets.py                  # Shoot types, destinations, strategies
 │   ├── scene_classifier.py         # CLIP-based auto-detect
 │   ├── lrc_bridge.py               # LrC plugin job processing + orientation mapping
+│   ├── lrc_verify.py               # LrC crop position self-check (NCC vs pre-crop rendition)
+│   ├── engine_info.py              # Engine --version report (+ config/build_info.json from CI)
 │   │
 │   ├── gui/
 │   │   ├── main_window.py          # Main CustomTkinter window
@@ -87,9 +91,12 @@ lightroom-subject-crop/
 ├── lightroom/
 │   └── FramePilot.lrplugin/        # Lightroom Classic plugin (Lua 5.1)
 │       ├── Info.lua                # Plugin manifest + menu items
-│       ├── FramePilotAutoCrop.lua  # Dialog, render, run engine, apply crops
-│       ├── FramePilotCore.lua      # Pure helpers (JSON, results, commands)
-│       └── PluginInfoProvider.lua  # Plug-in Manager engine settings
+│       ├── FramePilotAutoCrop.lua  # Dialog, render, run engine, apply crops, position check
+│       ├── FramePilotCheckSetup.lua # Check Setup: engine path/version + bundled test photo
+│       ├── FramePilotEngine.lua    # Engine lookup/execution, per-run log folders
+│       ├── FramePilotCore.lua      # Pure helpers (JSON, results, commands, log pruning)
+│       ├── check-photo.jpg         # Test photo for Check Setup (ultralytics bus.jpg, 640px)
+│       └── PluginInfoProvider.lua  # Plug-in Manager engine settings, Check Setup, Show Logs
 │
 └── tests/
     ├── test_crop_calculator.py     # Crop math tests
@@ -98,7 +105,11 @@ lightroom-subject-crop/
     ├── test_subject_training.py    # Label matching, weight fitting, evaluate reports
     ├── test_subject_modes.py       # Single/duel/group + mode framing
     ├── test_crop_candidates.py     # Candidate windows, rejects, terms, fallbacks
-    └── test_lrc_plugin.py          # Plugin Lua tests (lupa, fake LrC SDK)
+    ├── test_lrc_plugin.py          # Plugin Lua tests (lupa, fake LrC SDK)
+    ├── test_lrc_verify.py          # Position self-check against simulated LrC renders
+    ├── lr_simulation.py            # Simulated LrC render: develop crop + orientation
+    ├── test_engine_info.py         # Engine --version / command line
+    └── test_workflows.py           # CI triggers and Windows zip
 ```
 
 ### Key Data Flow
@@ -114,6 +125,9 @@ lightroom-subject-crop/
 2. Writes `job.json` (rendition path, develop `orientation`, current crop) and runs the engine via `LrTasks.execute`
 3. **Engine** (`engine.py` → `src/lrc_bridge.py`) detects subjects, computes the crop inside the current crop, and maps it to develop coordinates (unrotated stored pixels)
 4. Writes tab-separated results; plugin applies them with `photo:applyDevelopSettings` inside `catalog:withWriteAccessDo`
+5. **Position self-check**: re-renders each cropped photo at 512px and runs `engine --verify`, which compares it (NCC) with the expected region of the pre-crop rendition under every orientation. A mismatch restores the previous crop and logs the orientation used and the best-matching one
+6. **Logs**: each run's job/result/engine.log/plugin.log/verify files go to `%APPDATA%\FramePilot\logs\<timestamp>-<kind>` (last 10 kept); renditions stay in temp
+- **CI**: `tests.yml` (pytest on Linux) and `build.yml` (Windows zip, artifact `FramePilot-Windows`) run on every push and PR; `workflow_dispatch` is not available to sessions
 - **Engine lookup**: Plug-in Manager setting → `framepilot-engine(.exe)` next to the plugin folder → `../engine.py` in a source checkout
 - **Skipped**: videos and photos with a non-zero `CropAngle` (rotated crops aren't axis-aligned)
 - **Lua 5.1 only** (Lightroom's embedded Lua): no `goto`, no integer division
@@ -219,7 +233,7 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **222 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
+- **285 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
 - **Sports regression set**: `eval/` (see `docs/research/phase1-results.md` for current numbers)
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list

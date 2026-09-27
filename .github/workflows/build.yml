@@ -66,6 +66,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-Content engine-result.tsv
           if (-not (Select-String -Path engine-result.tsv -Pattern "`tsuccess`t" -Quiet)) { exit 1 }
+          $verify = @{ photos = @(@{ id = "check"; before = $image; after = $image; orientation = "AB" }) } | ConvertTo-Json -Depth 5
+          Set-Content -Path verify-job.json -Value $verify
+          & dist\FramePilot\framepilot-engine.exe --verify verify-job.json verify-result.tsv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content verify-result.tsv
+          if (-not (Select-String -Path verify-result.tsv -Pattern "`tmatch`t" -Quiet)) { exit 1 }
 
       - name: Create ZIP archive
         run: Compress-Archive -Path dist\FramePilot\* -DestinationPath dist\FramePilot.zip

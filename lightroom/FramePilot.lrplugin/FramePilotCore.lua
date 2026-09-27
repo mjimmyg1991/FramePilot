@@ -170,6 +170,51 @@ function Core.buildCommand(args, logPath, isWindows)
 	return command
 end
 
+-- Parses the engine's crop position check into a table keyed by photo id.
+-- Each line: id, status, score, best orientation, best score, message.
+function Core.parseVerifyResults(text)
+	local results = {}
+	for line in text:gmatch('[^\r\n]+') do
+		local fields = splitFields(line, '\t')
+		local id, status = fields[1], fields[2]
+		if id and id ~= '' and status then
+			results[id] = {
+				status = status,
+				score = tonumber(fields[3]),
+				bestOrientation = fields[4] or '',
+				bestScore = tonumber(fields[5]),
+				message = fields[6] or '',
+			}
+		end
+	end
+	return results
+end
+
+-- Develop settings that put back the crop a photo had before FramePilot ran.
+function Core.restoreCropSettings(developSettings)
+	local crop = Core.currentCrop(developSettings)
+	local settings = {
+		CropLeft = crop.left,
+		CropTop = crop.top,
+		CropRight = crop.right,
+		CropBottom = crop.bottom,
+	}
+	if type(developSettings.CropConstrainAspectRatio) == 'boolean' then
+		settings.CropConstrainAspectRatio = developSettings.CropConstrainAspectRatio
+	end
+	return settings
+end
+
+-- One line for the summary and log about a crop that didn't land as expected.
+function Core.describeMismatch(orientation, check)
+	local score = check.score and string.format('%.2f', check.score) or 'n/a'
+	local text = string.format('orientation %s scored %s', tostring(orientation), score)
+	if check.bestOrientation ~= '' and check.bestOrientation ~= orientation and check.bestScore then
+		text = text .. string.format('; %s would match (%.2f)', check.bestOrientation, check.bestScore)
+	end
+	return text
+end
+
 -- Returns the photo's current crop in develop coordinates, or the full frame.
 function Core.currentCrop(developSettings)
 	local left = tonumber(developSettings.CropLeft) or 0

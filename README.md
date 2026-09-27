@@ -58,6 +58,7 @@ When running from a source checkout, add `lightroom/FramePilot.lrplugin` instead
 - Each crop is a normal develop history step: undo it with **Edit > Undo** or adjust it with the Crop tool.
 - To keep the original framing, create virtual copies first and crop those.
 - Photos with a straightened or rotated crop (a non-zero crop angle) and videos are skipped and listed in the summary.
+- After cropping, each photo is rendered again, small, and compared with the region of the original rendition the crop was meant to show. If they don't match (for example the photo's rotation was read the wrong way), the previous crop is put back and the photo is listed as "Crop didn't land where expected"; the run's log records the photo's orientation and the orientation that would have matched. Turn this off with the checkbox in the crop dialog.
 
 **Logs**
 Each run keeps its `job.json`, `result.tsv`, `engine.log` and `plugin.log` in its own folder under `%APPDATA%\FramePilot\logs` on Windows (`~/Library/Application Support/FramePilot/logs` on macOS). The last 10 runs are kept. The summary and error dialogs name the run's folder, and Plug-in Manager has a **Show Logs** button. Zip the folder to report a problem.
