@@ -55,17 +55,18 @@ class TestOrientationMapping:
         crop = CropRegion(left=0.1, right=0.4, top=0.2, bottom=0.9)
         assert as_tuple(display_to_original(crop, "AB")) == pytest.approx(as_tuple(crop))
 
-    def test_bc_maps_left_edge_to_stored_top_edge(self):
-        # BC: stored top-right corner (B) is displayed top-left, so the stored
-        # top edge runs up the displayed left edge
+    def test_bc_maps_left_edge_to_stored_bottom_edge(self):
+        # BC (Rotate Right): stored top-left corner (A) is displayed top-right,
+        # so the stored bottom edge runs up the displayed left edge
         displayed_left_strip = CropRegion(left=0.0, right=0.25, top=0.0, bottom=1.0)
         result = display_to_original(displayed_left_strip, "BC")
-        assert as_tuple(result) == pytest.approx((0.0, 0.0, 1.0, 0.25))
+        assert as_tuple(result) == pytest.approx((0.0, 0.75, 1.0, 1.0))
 
-    def test_da_maps_left_edge_to_stored_bottom_edge(self):
+    def test_da_maps_left_edge_to_stored_top_edge(self):
+        # DA (Rotate Left): the stored top edge runs down the displayed left edge
         displayed_left_strip = CropRegion(left=0.0, right=0.25, top=0.0, bottom=1.0)
         result = display_to_original(displayed_left_strip, "DA")
-        assert as_tuple(result) == pytest.approx((0.0, 0.75, 1.0, 1.0))
+        assert as_tuple(result) == pytest.approx((0.0, 0.0, 1.0, 0.25))
 
     def test_cd_is_half_turn(self):
         crop = CropRegion(left=0.1, right=0.3, top=0.2, bottom=0.5)
@@ -153,11 +154,11 @@ class TestProcessItem:
 
         crop = result.crop
         # A full-height displayed strip at the left becomes a full-width
-        # stored strip along the top
+        # stored strip along the bottom
         assert crop.left == pytest.approx(0.0)
         assert crop.right == pytest.approx(1.0)
-        assert crop.top == pytest.approx(0.0)
-        assert crop.bottom == pytest.approx(0.8 * 400 / 600, abs=1e-3)
+        assert crop.top == pytest.approx(1.0 - 0.8 * 400 / 600, abs=1e-3)
+        assert crop.bottom == pytest.approx(1.0)
 
 
 class TestRunJob:

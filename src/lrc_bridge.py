@@ -79,9 +79,12 @@ def _orientation_frame(
 ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
     """Return (origin, u_axis, v_axis) mapping displayed coords to stored coords.
 
-    Lightroom describes orientation by the two stored-image corners that end up
-    along the top edge of the displayed image, left to right (A=top-left,
-    B=top-right, C=bottom-right, D=bottom-left of the stored pixels).
+    Lightroom's code gives the displayed corners where the stored image's
+    top-left and top-right corners end up (A=top-left, B=top-right,
+    C=bottom-right, D=bottom-left). Rotate Right (Cmd+]) gives "BC", Rotate Left
+    and camera-vertical EXIF 8 give "DA", confirmed in Lightroom Classic 15.5.
+    It is converted here to the stored corners along the displayed top edge,
+    which is what the frame is built from; the two only differ for BC and DA.
     """
     if (
         len(orientation) != 2
@@ -99,6 +102,11 @@ def _orientation_frame(
         step = -1
     else:
         raise ValueError(f"Unsupported orientation: {orientation!r}")
+
+    # Invert "stored corner -> displayed corner" into "displayed corner -> stored corner"
+    first = CLOCKWISE_CORNERS[(-step * idx_first) % 4]
+    second = CLOCKWISE_CORNERS[(step * (1 - idx_first)) % 4]
+    idx_second = CLOCKWISE_CORNERS.index(second)
 
     bottom_left = CLOCKWISE_CORNERS[(idx_second + 2 * step) % 4]
     origin = CORNER_POSITIONS[first]

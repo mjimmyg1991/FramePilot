@@ -96,7 +96,30 @@ class TestExpectedRegion:
     def test_rotated(self):
         applied = CropRegion(left=0.0, right=1.0, top=0.0, bottom=0.25)
         region = expected_region(FULL, applied, "BC")
-        assert (region.left, region.top, region.right, region.bottom) == pytest.approx((0.0, 0.0, 0.25, 1.0))
+        assert (region.left, region.top, region.right, region.bottom) == pytest.approx((0.75, 0.0, 1.0, 1.0))
+
+
+class TestLightroomOrientationCodes:
+    """Pin each code to what Lightroom Classic 15.5 actually shows.
+
+    Rotate Right (Cmd+]) reported "BC", Rotate Left (Cmd+[) and a camera-vertical
+    EXIF 8 raw reported "DA", Flip Horizontal "BA", two Rotate Rights "CD".
+    Everything else in these tests builds on orient(), so this is the anchor.
+    """
+
+    @pytest.mark.parametrize("orientation, expected", [
+        ("AB", lambda img: img),
+        ("BC", lambda img: cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)),
+        ("CD", lambda img: cv2.rotate(img, cv2.ROTATE_180)),
+        ("DA", lambda img: cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)),
+        ("BA", lambda img: cv2.flip(img, 1)),
+        ("DC", lambda img: cv2.flip(img, 0)),
+        ("AD", lambda img: cv2.transpose(img)),
+        ("CB", lambda img: cv2.rotate(cv2.transpose(img), cv2.ROTATE_180)),
+    ])
+    def test_orient_matches_lightroom(self, orientation, expected):
+        stored = np.arange(3 * 5 * 3, dtype=np.uint8).reshape(3, 5, 3)
+        np.testing.assert_array_equal(orient(stored, orientation), expected(stored))
 
     def test_outside_previous_crop_is_none(self):
         previous = CropRegion(left=0.5, right=1.0, top=0.0, bottom=1.0)
