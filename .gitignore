@@ -33,3 +33,5 @@ config/local_config.yaml
 build/
 dist/
 /config/build_info.json
+.venv-*/
+*.pth

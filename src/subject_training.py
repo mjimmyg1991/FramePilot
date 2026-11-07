@@ -32,7 +32,7 @@ from .crop_candidates import (
     rank_crops,
     visible_fraction,
 )
-from .detector import Detection, SubjectDetector
+from .detector import Detection, SubjectDetector, default_detr_model
 from .subject_modes import SubjectMode, choose_subject
 from .subject_scoring import (
     WEIGHTS_PATH,
@@ -401,9 +401,7 @@ def label(
 ) -> None:
     """Click the main subject in each photo (s = skip, q = save and quit)."""
     labels = load_labels(folder)
-    detector = SubjectDetector(
-        yolo_model="yolov8m-seg.pt" if precise else "yolov8m.pt", use_tight_bbox=precise
-    )
+    detector = SubjectDetector(detr_model=default_detr_model(precise), use_tight_bbox=precise)
     todo = [p for p in sorted(folder.iterdir())
             if p.suffix.lower() in IMAGE_EXTENSIONS and p.name not in labels]
     typer.echo(f"{len(todo)} photo(s) to label, {len(labels)} already labelled")
@@ -471,13 +469,16 @@ def evaluate(
     folder: Annotated[Path, typer.Argument(help="Folder with photos and subjects.json")],
     weights_file: Annotated[Optional[Path], typer.Option("--weights", help="Weights JSON to test")] = None,
     report: Annotated[Optional[Path], typer.Option(help="Folder for annotated images of misses")] = None,
+    precise: Annotated[bool, typer.Option(help="Use the segmentation model")] = False,
+    model: Annotated[Optional[str], typer.Option(help="RF-DETR size to test, e.g. small, large, seg-large")] = None,
     cross_validated: Annotated[bool, typer.Option(
         "--cross-validate", help="Also report held-out accuracy of training on the other folds")] = False,
     l2: Annotated[float, typer.Option(help="Pull towards the current weights when cross-validating")] = 0.05,
 ) -> None:
     """Report how often Smart Select picks the labelled subject."""
     weights = load_subject_weights(weights_file)
-    examples, unmatched = build_examples(folder, load_labels(folder), SubjectDetector())
+    detector = SubjectDetector(detr_model=model or default_detr_model(precise), use_tight_bbox=precise)
+    examples, unmatched = build_examples(folder, load_labels(folder), detector)
     _print_dataset_summary(examples, unmatched)
     typer.echo("Current weights:")
     _print_summary(summarize(examples, weights))

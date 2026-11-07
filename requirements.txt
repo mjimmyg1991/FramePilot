@@ -1,4 +1,4 @@
-ultralytics>=8.0.0
+rfdetr>=1.12,<2  # Apache-2.0; never install the rfdetr[plus] extra (PML 1.0 sizes)
 opencv-python>=4.8.0,<5  # 5.x removed CascadeClassifier used for face fallback
 Pillow>=10.0.0
 lxml>=4.9.0

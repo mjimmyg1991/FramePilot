@@ -127,8 +127,8 @@ def process(
     ] = 0.15,
     detection_model: Annotated[
         str,
-        typer.Option("--model", "-m", help="Detection model: yolo or face")
-    ] = "yolo",
+        typer.Option("--model", "-m", help="Detection model: detr or face")
+    ] = "detr",
     detection_strategy: Annotated[
         str,
         typer.Option("--strategy", "-s", help="Subject selection: largest, centered, highest_confidence")

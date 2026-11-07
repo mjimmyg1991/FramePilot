@@ -1,4 +1,4 @@
-"""Subject detection module using YOLO and face detection."""
+"""Subject detection module using RF-DETR and face detection."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +10,7 @@ import numpy as np
 from src import resource_path
 
 if TYPE_CHECKING:
-    from ultralytics import YOLO
+    from rfdetr import RFDETR
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Detection:
     label: str  # "person" or "face"
     sharpness: float = 0.0  # Laplacian variance - higher = sharper/more in focus
     mask: np.ndarray | None = None  # Segmentation mask (binary, original image size)
-    original_bbox: tuple[float, float, float, float] | None = None  # Original YOLO bbox before tightening
+    original_bbox: tuple[float, float, float, float] | None = None  # Original detector bbox before tightening
     kit_color: tuple[float, float, float] | None = None  # Median CIE Lab colour of the torso
 
     @property
@@ -198,51 +198,74 @@ def bbox_from_mask(
     )
 
 
-class SubjectDetector:
-    """Unified interface for subject detection using YOLO and face detection."""
+# RF-DETR sizes released under Apache-2.0 (detection, then segmentation), with the
+# class name and bundled weights file of each (slim_weights.py writes the "-slim"
+# files from Roboflow's downloads). Atto, Femto, Pico, XL and 2XL are under the
+# non-permissive PML 1.0 and are deliberately not listed.
+DETR_MODELS = {
+    "nano": ("RFDETRNano", "rf-detr-nano-slim.pth"),
+    "small": ("RFDETRSmall", "rf-detr-small-slim.pth"),
+    "medium": ("RFDETRMedium", "rf-detr-medium-slim.pth"),
+    "large": ("RFDETRLarge", "rf-detr-large-2026-slim.pth"),
+    "seg-nano": ("RFDETRSegNano", "rf-detr-seg-nano-slim.pt"),
+    "seg-small": ("RFDETRSegSmall", "rf-detr-seg-small-slim.pt"),
+    "seg-medium": ("RFDETRSegMedium", "rf-detr-seg-medium-slim.pt"),
+    "seg-large": ("RFDETRSegLarge", "rf-detr-seg-large-slim.pt"),
+}
+DEFAULT_DETR_MODEL = "medium"
+DEFAULT_PRECISE_DETR_MODEL = "seg-medium"
 
-    PERSON_CLASS_ID = 0  # COCO class ID for person
-    SPORTS_BALL_CLASS_ID = 32
+
+def default_detr_model(precise: bool) -> str:
+    """Model key for fast mode (boxes) or precise mode (segmentation masks)."""
+    return DEFAULT_PRECISE_DETR_MODEL if precise else DEFAULT_DETR_MODEL
+
+
+class SubjectDetector:
+    """Unified interface for subject detection using RF-DETR and face detection."""
+
+    PERSON_LABEL = "person"
+    SPORTS_BALL_LABEL = "sports ball"
     BALL_CONFIDENCE_THRESHOLD = 0.25
 
     def __init__(
         self,
-        model_type: Literal["yolo", "face"] = "yolo",
-        yolo_model: str = "yolov8m.pt",
+        model_type: Literal["detr", "face"] = "detr",
+        detr_model: str = DEFAULT_DETR_MODEL,
         confidence_threshold: float = 0.5,
         use_tight_bbox: bool = False
     ):
         """Initialize the detector.
 
         Args:
-            model_type: Primary detection model to use ("yolo" or "face")
-            yolo_model: YOLO model variant to use (default: fast detection model)
-            confidence_threshold: Minimum confidence for detections
+            model_type: Primary detection model to use ("detr" or "face")
+            detr_model: Key of DETR_MODELS; a "seg-" size is needed for tight boxes
+            confidence_threshold: Minimum confidence for people
             use_tight_bbox: Whether to derive tight bbox from segmentation mask
         """
+        if detr_model not in DETR_MODELS:
+            raise ValueError(f"Unknown detection model {detr_model!r}; choose from {', '.join(DETR_MODELS)}")
         self.model_type = model_type
-        self.yolo_model_name = yolo_model
+        self.detr_model_name = detr_model
         self.confidence_threshold = confidence_threshold
         self.use_tight_bbox = use_tight_bbox
 
-        self._yolo_model: YOLO | None = None
+        self._detr_model: RFDETR | None = None
         self._face_cascade: cv2.CascadeClassifier | None = None
-        self._yolo_face_model: YOLO | None = None
 
     @property
-    def yolo_model(self) -> "YOLO":
-        """Lazy-load YOLO model."""
-        if self._yolo_model is None:
+    def detr_model(self) -> "RFDETR":
+        """Lazy-load RF-DETR model, preferring the weights bundled with the app."""
+        if self._detr_model is None:
             # Imported here so the engine's --version and --verify modes start fast
-            from ultralytics import YOLO
+            import rfdetr
 
-            model_path = resource_path(self.yolo_model_name)
-            if model_path.exists():
-                self._yolo_model = YOLO(str(model_path))
-            else:
-                # Fallback: let YOLO search/download
-                self._yolo_model = YOLO(self.yolo_model_name)
-        return self._yolo_model
+            class_name, weights = DETR_MODELS[self.detr_model_name]
+            kwargs = {}
+            if resource_path(weights).exists():
+                kwargs["pretrain_weights"] = str(resource_path(weights))
+            self._detr_model = getattr(rfdetr, class_name)(**kwargs)
+        return self._detr_model
 
     @property
     def face_cascade(self) -> cv2.CascadeClassifier:
@@ -284,7 +307,7 @@ class SubjectDetector:
         height, width = image.shape[:2]
 
         # Try person detection first
-        detections, balls = self._detect_yolo(image, width, height)
+        detections, balls = self._detect_detr(image, width, height)
 
         # If no person detected, try face detection as fallback
         if not detections:
@@ -303,16 +326,16 @@ class SubjectDetector:
 
         return SceneDetections(people=detections, balls=balls, image_size=(width, height))
 
-    def _detect_yolo(
+    def _detect_detr(
         self,
         image: np.ndarray,
         img_width: int,
         img_height: int
     ) -> tuple[list[Detection], list[Detection]]:
-        """Run YOLO detection for persons and sports balls.
+        """Run RF-DETR detection for persons and sports balls.
 
         Uses segmentation masks to derive tighter bounding boxes than
-        standard object detection when available.
+        standard object detection when a segmentation model is loaded.
 
         Args:
             image: OpenCV image (BGR)
@@ -322,81 +345,59 @@ class SubjectDetector:
         Returns:
             Tuple of (person detections, sports ball detections)
         """
-        results = self.yolo_model(image, verbose=False)
+        found = self.detr_model.predict(
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
+            threshold=min(self.confidence_threshold, self.BALL_CONFIDENCE_THRESHOLD),
+        )
         detections = []
         balls = []
 
-        for result in results:
-            boxes = result.boxes
-            masks = getattr(result, 'masks', None)
+        for i in range(len(found)):
+            label = found.data["class_name"][i]
+            conf = float(found.confidence[i])
+            x1, y1, x2, y2 = found.xyxy[i]
+            original_bbox = (
+                float(x1 / img_width),
+                float(y1 / img_height),
+                float(x2 / img_width),
+                float(y2 / img_height)
+            )
 
-            if boxes is None:
+            if label == self.SPORTS_BALL_LABEL:
+                if conf >= self.BALL_CONFIDENCE_THRESHOLD:
+                    balls.append(Detection(
+                        bbox=original_bbox, confidence=conf, label="sports_ball", original_bbox=original_bbox
+                    ))
                 continue
 
-            for i in range(len(boxes)):
-                cls = int(boxes.cls[i])
-                conf = float(boxes.conf[i])
+            if label != self.PERSON_LABEL or conf < self.confidence_threshold:
+                continue
 
-                if cls == self.SPORTS_BALL_CLASS_ID and conf >= self.BALL_CONFIDENCE_THRESHOLD:
-                    bx1, by1, bx2, by2 = boxes.xyxy[i].cpu().numpy()
-                    ball_bbox = (
-                        float(bx1 / img_width),
-                        float(by1 / img_height),
-                        float(bx2 / img_width),
-                        float(by2 / img_height)
-                    )
-                    balls.append(Detection(
-                        bbox=ball_bbox, confidence=conf, label="sports_ball", original_bbox=ball_bbox
-                    ))
-                    continue
+            # Try to derive tight bbox from segmentation mask
+            mask_array = None
+            tight_bbox = original_bbox
 
-                if cls != self.PERSON_CLASS_ID:
-                    continue
+            if self.use_tight_bbox and found.mask is not None:
+                try:
+                    mask_array = found.mask[i].astype(np.uint8)
+                    # Resize mask to original image size if needed
+                    if mask_array.shape != (img_height, img_width):
+                        mask_array = cv2.resize(
+                            mask_array, (img_width, img_height), interpolation=cv2.INTER_NEAREST
+                        )
+                    tight_bbox = bbox_from_mask(mask_array, img_width, img_height)
+                except Exception:
+                    # Fall back to original bbox if mask processing fails
+                    tight_bbox = original_bbox
+                    mask_array = None
 
-                if conf < self.confidence_threshold:
-                    continue
-
-                # Get original bounding box (xyxy format)
-                box = boxes.xyxy[i].cpu().numpy()
-                x1, y1, x2, y2 = box
-
-                original_bbox = (
-                    float(x1 / img_width),
-                    float(y1 / img_height),
-                    float(x2 / img_width),
-                    float(y2 / img_height)
-                )
-
-                # Try to derive tight bbox from segmentation mask
-                mask_array = None
-                tight_bbox = original_bbox
-
-                if self.use_tight_bbox and masks is not None:
-                    try:
-                        mask_data = masks.data[i].cpu().numpy()
-                        # Resize mask to original image size if needed
-                        if mask_data.shape != (img_height, img_width):
-                            mask_array = cv2.resize(
-                                mask_data.astype(np.uint8),
-                                (img_width, img_height),
-                                interpolation=cv2.INTER_NEAREST
-                            )
-                        else:
-                            mask_array = mask_data.astype(np.uint8)
-
-                        tight_bbox = bbox_from_mask(mask_array, img_width, img_height)
-                    except Exception:
-                        # Fall back to original bbox if mask processing fails
-                        tight_bbox = original_bbox
-                        mask_array = None
-
-                detections.append(Detection(
-                    bbox=tight_bbox,
-                    confidence=conf,
-                    label="person",
-                    mask=mask_array,
-                    original_bbox=original_bbox
-                ))
+            detections.append(Detection(
+                bbox=tight_bbox,
+                confidence=conf,
+                label="person",
+                mask=mask_array,
+                original_bbox=original_bbox
+            ))
 
         return detections, balls
 

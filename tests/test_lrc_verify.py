@@ -233,5 +233,5 @@ class TestRunVerify:
 
         assert completed.returncode == 0, completed.stderr
         assert "(crop position check)" in completed.stdout
-        assert "ultralytics" not in completed.stderr
+        assert "rfdetr" not in completed.stderr
         assert result_path.read_text(encoding="utf-8").split("\t")[1] == "match"

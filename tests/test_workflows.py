@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from src.detector import DETR_MODELS, default_detr_model
+
 
 WORKFLOW_DIR = Path(__file__).parent.parent / ".github" / "workflows"
 
@@ -72,7 +74,7 @@ class TestMacBuild:
 
 
 class TestPyInstallerSpec:
-    """The frozen engine needs torchvision's native ops library for YOLO's NMS."""
+    """The frozen engine needs torchvision's native ops library and the RF-DETR weights."""
 
     def test_torchvision_native_libraries_bundled_in_both_exes(self):
         spec = (Path(__file__).parent.parent / "framepilot.spec").read_text(encoding="utf-8")
@@ -82,3 +84,26 @@ class TestPyInstallerSpec:
     def test_engine_only_build_bundles_models_and_config(self):
         spec = (Path(__file__).parent.parent / "framepilot.spec").read_text(encoding="utf-8")
         assert "datas=SHARED_DATAS if ENGINE_ONLY else []" in spec
+
+    def test_spec_bundles_the_weights_the_detector_loads(self):
+        spec = (Path(__file__).parent.parent / "framepilot.spec").read_text(encoding="utf-8")
+        assert "DETR_MODELS[default_detr_model(precise)][1]" in spec
+        assert "collect_submodules('rfdetr')" in spec
+
+
+class TestBuildWeights:
+    """Both builds fetch the RF-DETR weights (Apache-2.0 sizes only) that the spec bundles."""
+
+    @pytest.mark.parametrize("job", ["build-windows", "build-macos"])
+    def test_downloads_and_slims_the_default_weights(self, job):
+        steps = load_workflow("build.yml")["jobs"][job]["steps"]
+        step = next(s for s in steps if s.get("name") == "Download RF-DETR weights")
+        assert step["env"]["RF_HOME"] == "${{ github.workspace }}"
+        for _, weights in (DETR_MODELS[default_detr_model(p)] for p in (False, True)):
+            assert weights.replace("-slim", "") in step["run"]
+        assert "yolo" not in step["run"].lower()
+
+    def test_no_pml_sizes_are_downloaded(self):
+        text = (WORKFLOW_DIR / "build.yml").read_text(encoding="utf-8")
+        for pml in ("Atto", "Femto", "Pico", "XLarge", "plus"):
+            assert pml not in text

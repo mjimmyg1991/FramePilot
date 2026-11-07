@@ -14,6 +14,7 @@ ICON = str(Path(SPECPATH) / 'branding' / 'framepilot.ico') if sys.platform == 'w
 # Get paths to required packages
 import cv2
 import torchvision
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 cv2_path = Path(cv2.__file__).parent
 
@@ -33,21 +34,15 @@ TORCHVISION_BINARIES = [
     for path in torchvision_path.glob(pattern)
 ]
 
+# Weights for the fast and precise models, as named in src/detector.py
+sys.path.insert(0, SPECPATH)
+from src.detector import DETR_MODELS, default_detr_model
+
+DETR_WEIGHTS = [DETR_MODELS[default_detr_model(precise)][1] for precise in (False, True)]
+
 DETECTION_HIDDEN_IMPORTS = [
-    # Ultralytics/YOLO dependencies
-    'ultralytics',
-    'ultralytics.nn',
-    'ultralytics.nn.tasks',
-    'ultralytics.utils',
-    'ultralytics.utils.callbacks',
-    'ultralytics.engine',
-    'ultralytics.engine.model',
-    'ultralytics.engine.predictor',
-    'ultralytics.engine.results',
-    'ultralytics.models',
-    'ultralytics.models.yolo',
-    'ultralytics.models.yolo.detect',
-    'ultralytics.data',
+    # RF-DETR builds its model classes by name, so bundle every submodule
+    *collect_submodules('rfdetr'),
     # PyTorch
     'torch',
     'torchvision',
@@ -61,10 +56,11 @@ EXCLUDED_MODULES = [
     'notebook',
     'jupyter',
     'IPython',
-    'scipy',
     'pandas',
-    # Exclude transformers/CLIP (optional feature, very large)
-    'transformers',
+    # PyAV (video only, pulled in by supervision) ships a second FFmpeg with x264/x265
+    'av',
+    # CLIP scene classification (optional feature); RF-DETR needs scipy and the
+    # transformers package itself, so only the tokenizers wheel is left out
     'tokenizers',
 ]
 
@@ -74,9 +70,13 @@ SHARED_DATAS = [
     (str(project_root / 'config'), 'config'),
     # OpenCV haar cascades for face detection
     (str(haarcascades_path), 'cv2/data'),
-    # YOLO model files
-    (str(project_root / 'yolov8m.pt'), '.'),
-    (str(project_root / 'yolov8m-seg.pt'), '.'),
+    # transformers' docstring decorators read RF-DETR's source at import time
+    *collect_data_files('rfdetr', include_py_files=True),
+    # Package metadata so the engine's --version can report these versions
+    *copy_metadata('rfdetr'),
+    *copy_metadata('opencv-python'),
+    # RF-DETR weights (downloaded by the build into the project root)
+    *[(str(project_root / name), '.') for name in DETR_WEIGHTS],
 ]
 
 gui_outputs = []
