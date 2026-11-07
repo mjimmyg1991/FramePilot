@@ -100,10 +100,13 @@ class TestExpectedRegion:
 
 
 class TestLightroomOrientationCodes:
-    """Pin each code to what Lightroom Classic 15.5 actually shows.
+    """Pin each code to what Lightroom Classic (15.5.1 and 15.6) actually shows.
 
     Rotate Right (Cmd+]) reported "BC", Rotate Left (Cmd+[) and a camera-vertical
     EXIF 8 raw reported "DA", Flip Horizontal "BA", two Rotate Rights "CD".
+    Rotate Right then Flip Horizontal reported "CB" and rendered the transpose;
+    Rotate Left then Flip Horizontal reported "AD" and rendered the anti-transpose
+    (8 Nov 2026 retest). "DC" is the only code not yet seen in a real run.
     Everything else in these tests builds on orient(), so this is the anchor.
     """
 
@@ -114,8 +117,8 @@ class TestLightroomOrientationCodes:
         ("DA", lambda img: cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)),
         ("BA", lambda img: cv2.flip(img, 1)),
         ("DC", lambda img: cv2.flip(img, 0)),
-        ("AD", lambda img: cv2.transpose(img)),
-        ("CB", lambda img: cv2.rotate(cv2.transpose(img), cv2.ROTATE_180)),
+        ("CB", lambda img: cv2.transpose(img)),
+        ("AD", lambda img: cv2.rotate(cv2.transpose(img), cv2.ROTATE_180)),
     ])
     def test_orient_matches_lightroom(self, orientation, expected):
         stored = np.arange(3 * 5 * 3, dtype=np.uint8).reshape(3, 5, 3)

@@ -31,7 +31,22 @@ CORNER_POSITIONS = {
     "C": (1.0, 1.0),
     "D": (0.0, 1.0),
 }
-CLOCKWISE_CORNERS = "ABCD"
+# Lightroom orientation code -> stored corners shown at the displayed top-left,
+# top-right and bottom-left. Checked against real renders in Lightroom Classic
+# 15.5.1 and 15.6: BC Rotate Right, DA Rotate Left or camera-vertical EXIF 8,
+# CD half turn, BA Flip Horizontal, CB Rotate Right then Flip Horizontal (the
+# transpose), AD Rotate Left then Flip Horizontal. DC (Flip Vertical) has not
+# been seen in a real run yet.
+DISPLAY_CORNERS = {
+    "AB": "ABD",
+    "BC": "DAC",
+    "CD": "CDB",
+    "DA": "BCA",
+    "BA": "BAC",
+    "DC": "DCA",
+    "CB": "ADB",
+    "AD": "CBD",
+}
 VALID_STRATEGIES = {"highest_confidence", "largest", "centered", "group"}
 
 
@@ -79,39 +94,16 @@ def _orientation_frame(
 ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
     """Return (origin, u_axis, v_axis) mapping displayed coords to stored coords.
 
-    Lightroom's code gives the displayed corners where the stored image's
-    top-left and top-right corners end up (A=top-left, B=top-right,
-    C=bottom-right, D=bottom-left). Rotate Right (Cmd+]) gives "BC", Rotate Left
-    and camera-vertical EXIF 8 give "DA", confirmed in Lightroom Classic 15.5.
-    It is converted here to the stored corners along the displayed top edge,
-    which is what the frame is built from; the two only differ for BC and DA.
+    Corners of the stored pixels are A=top-left, B=top-right, C=bottom-right,
+    D=bottom-left. Lightroom's two-letter codes don't follow one corner-reading
+    rule across rotations and flips, so each code is looked up in
+    DISPLAY_CORNERS, which was pinned to real Lightroom Classic renders.
     """
-    if (
-        len(orientation) != 2
-        or orientation[0] not in CORNER_POSITIONS
-        or orientation[1] not in CORNER_POSITIONS
-    ):
+    corners = DISPLAY_CORNERS.get(orientation)
+    if corners is None:
         raise ValueError(f"Unsupported orientation: {orientation!r}")
 
-    first, second = orientation[0], orientation[1]
-    idx_first = CLOCKWISE_CORNERS.index(first)
-    idx_second = CLOCKWISE_CORNERS.index(second)
-    if idx_second == (idx_first + 1) % 4:
-        step = 1
-    elif idx_second == (idx_first - 1) % 4:
-        step = -1
-    else:
-        raise ValueError(f"Unsupported orientation: {orientation!r}")
-
-    # Invert "stored corner -> displayed corner" into "displayed corner -> stored corner"
-    first = CLOCKWISE_CORNERS[(-step * idx_first) % 4]
-    second = CLOCKWISE_CORNERS[(step * (1 - idx_first)) % 4]
-    idx_second = CLOCKWISE_CORNERS.index(second)
-
-    bottom_left = CLOCKWISE_CORNERS[(idx_second + 2 * step) % 4]
-    origin = CORNER_POSITIONS[first]
-    top_right = CORNER_POSITIONS[second]
-    bottom_left_pos = CORNER_POSITIONS[bottom_left]
+    origin, top_right, bottom_left_pos = (CORNER_POSITIONS[c] for c in corners)
     u_axis = (top_right[0] - origin[0], top_right[1] - origin[1])
     v_axis = (bottom_left_pos[0] - origin[0], bottom_left_pos[1] - origin[1])
     return origin, u_axis, v_axis
