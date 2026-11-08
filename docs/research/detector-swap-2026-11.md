@@ -155,6 +155,8 @@ The shipped row is partly in-sample because 143 of the 160 photos were used to f
 
 Partly. Mode correct went from 106 to 111 of 160 (66.2% to 69.4%; 110 held out) against YOLOv8m's 116 (72.5%), so the gap closed from ten photos to five. One photo is 0.6 points, so the remaining five-photo gap is about 3 points and is inside what a different annotator or set could move. Labelled members framed is 91/115 (79%) against 109/133 (82%) for YOLO, with 94% of framed people being labelled members (91 of 97, YOLO 109 of 114). Intruders recovered fully (9 and 14, the same as YOLOv8m). Exact subject went from 116 to 119 against 124. Nothing in the sweep or the re-fit closes the last five mode photos; that would need a re-tune of the duel and group rules on labels made from RF-DETR boxes.
 
+The cost of 0.75: on 3 of the 218 photos nobody clears the threshold, so the engine returns "No subject detected" and leaves the photo uncropped. YOLOv8m found someone on all 218. The three are `000000000149` (best person 0.72, YOLO found 1), `000000000201` (0.64, the distant figure, YOLO found 1) and `b95e542a5ac525bc` (0.56, YOLO found 3). Only `b95e542a5ac525bc` is in the fixed 160, where it already counts as a miss; the other two are single-person photos outside it, so the table does not show them. A fallback that keeps the most confident person above 0.5 when nobody reaches 0.75 would crop all three and leave every photo with someone at 0.75 unchanged. It is not in this change.
+
 ## Timing
 
 Measured on the same Mac, `detect_scene` per photo (including the sharpness and kit colour work), 218 photos:
@@ -229,3 +231,4 @@ Why:
 2. Decide on retiring Precise mode and its second weights file.
 3. Decide on the OpenCV FFmpeg licence exposure noted above (pre-existing).
 4. Check Windows CPU timing once CI produces a Windows build. Nano is the fallback if it is too slow, but at any threshold it gave worse mode correct than Medium, so expect to lose about five mode photos.
+5. Decide on the low-confidence fallback for photos where nobody reaches 0.75 (3 of 218 left uncropped otherwise).
