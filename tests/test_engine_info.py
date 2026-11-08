@@ -51,7 +51,7 @@ class TestEngineCommandLine:
         )
         assert completed.returncode == 0
         assert completed.stdout.startswith(f"FramePilot engine {__version__}")
-        assert "ultralytics" not in completed.stderr
+        assert "rfdetr" not in completed.stderr
         assert "torch" not in completed.stderr.split()
 
     def test_wrong_arguments_exit_2(self):

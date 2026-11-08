@@ -10,7 +10,7 @@ import cv2
 
 from ..crop_calculator import CropRegion, frame_subject
 from ..crop_candidates import rank_crops
-from ..detector import Detection, SubjectDetector
+from ..detector import Detection, SubjectDetector, default_detr_model
 from ..xmp_handler import write_crop_to_xmp
 
 
@@ -101,15 +101,15 @@ class ProcessingWorker:
         """Process files (runs in background thread)."""
         # Determine model based on precise_mode
         precise_mode = getattr(self, '_precise_mode', False)
-        model_name = "yolov8m-seg.pt" if precise_mode else "yolov8m.pt"
+        model_name = default_detr_model(precise_mode)
         use_tight = precise_mode
 
         # Reload detector if model changed or not loaded
-        if self._detector is None or getattr(self._detector, 'yolo_model_name', '') != model_name:
+        if self._detector is None or getattr(self._detector, 'detr_model_name', '') != model_name:
             if self.on_progress:
                 mode_str = "precise" if precise_mode else "fast"
                 self.on_progress(0, len(files), f"Loading {mode_str} detection model...")
-            self._detector = SubjectDetector(yolo_model=model_name, use_tight_bbox=use_tight)
+            self._detector = SubjectDetector(detr_model=model_name, use_tight_bbox=use_tight)
 
         results = []
         for i, file_path in enumerate(files):

@@ -1,10 +1,9 @@
 # Default configuration for lightroom-subject-crop
 
 detection:
-  model_type: yolo  # yolo or face
-  yolo_model: yolov8m.pt  # yolov8n.pt, yolov8s.pt, yolov8m.pt, yolov8l.pt
-  confidence_threshold: 0.5
-  person_class_id: 0  # COCO class ID for person
+  model_type: detr  # detr or face
+  detr_model: medium  # nano, small, medium, large (seg-* for precise mode)
+  confidence_threshold: 0.75  # box models; seg-* sizes use 0.5
 
 crop:
   default_aspect_ratio: [4, 5]  # width:height for vertical crop

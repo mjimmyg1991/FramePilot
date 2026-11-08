@@ -5,7 +5,7 @@ A Python tool that analyzes landscape photos, detects subjects (persons/faces), 
 ## Features
 
 - **Desktop GUI** with drag & drop support
-- Automatic subject detection using YOLO (persons) with face detection fallback
+- Automatic subject detection using RF-DETR (persons) with face detection fallback
 - Calculates optimal vertical crop centered on detected subject
 - Generates Lightroom-compatible XMP sidecar files
 - Supports multiple aspect ratios (4:5, 9:16, etc.)
@@ -130,7 +130,7 @@ python -m src.main process <path> [OPTIONS]
 Options:
   -a, --aspect-ratio TEXT   Target aspect ratio (default: 4:5)
   -p, --padding FLOAT       Padding around subject, 0.0-1.0 (default: 0.15)
-  -m, --model TEXT          Detection model: yolo or face (default: yolo)
+  -m, --model TEXT          Detection model: detr or face (default: detr)
   -s, --strategy TEXT       Subject selection: largest, centered,
                             highest_confidence (default: highest_confidence)
   -o, --output-dir PATH     Output directory for XMP files
@@ -194,11 +194,11 @@ python -m src.main process ./photos --output-dir ./xmp_files
 
 ## Detection Models
 
-### YOLO (default)
-Uses YOLOv8m for person detection. Best for full-body or partial-body shots. The model is downloaded automatically on first use.
+### RF-DETR (default)
+Uses RF-DETR Medium (Apache-2.0) for person and ball detection. Best for full-body or partial-body shots. From a source checkout the weights download automatically on first use; the packaged engine bundles them.
 
 ### Face Fallback
-If no person is detected, the tool falls back to OpenCV's Haar cascade face detection. Useful for close-up portraits or when YOLO misses a person.
+If no person is detected, the tool falls back to OpenCV's Haar cascade face detection. Useful for close-up portraits or when RF-DETR misses a person.
 
 ## Configuration
 

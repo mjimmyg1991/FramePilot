@@ -22,7 +22,7 @@ from .crop_calculator import (
     frame_subject,
 )
 from .crop_candidates import rank_crops
-from .detector import SceneDetections, SubjectDetector
+from .detector import SceneDetections, SubjectDetector, default_detr_model
 
 
 CORNER_POSITIONS = {
@@ -328,7 +328,7 @@ def run_job(
     Args:
         job_path: JSON job written by the plugin
         result_path: Where to write the tab-separated results
-        detector: Optional detector (a YOLO detector is created if omitted)
+        detector: Optional detector (an RF-DETR detector is created if omitted)
 
     Returns:
         Process exit code (0 when the job ran, even if some photos failed)
@@ -336,8 +336,9 @@ def run_job(
     settings, items = load_job(job_path)
 
     if detector is None:
-        model = "yolov8m-seg.pt" if settings.precise else "yolov8m.pt"
-        detector = SubjectDetector(yolo_model=model, use_tight_bbox=settings.precise)
+        detector = SubjectDetector(
+            detr_model=default_detr_model(settings.precise), use_tight_bbox=settings.precise
+        )
 
     print(
         f"Job: {len(items)} photo(s), aspect {settings.aspect_ratio[0]}:{settings.aspect_ratio[1]}, "

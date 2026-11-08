@@ -3,7 +3,7 @@
 
 The labels in eval/sports/subjects.json cover 195 multi-person sports photos
 from the Open Images V7 validation split (CC BY 2.0, via Flickr) and 23 from
-Ultralytics' coco128 sample and bundled assets. Images aren't stored in git;
+the coco128 sample and two stock photos (images only, no Ultralytics code). Images aren't stored in git;
 this script fetches them next to a copy of the labels so the folder can be
 passed straight to the evaluate and train commands:
 
@@ -24,6 +24,7 @@ LABELS = Path(__file__).parent / "sports" / "subjects.json"
 OPEN_IMAGES_URL = "https://open-images-dataset.s3.amazonaws.com/validation/{name}"
 COCO128_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip"
 PACKAGE_ASSETS = ("bus.jpg", "zidane.jpg")
+PACKAGE_ASSETS_URL = "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/{name}"
 
 
 def _download(url: str) -> bytes:
@@ -58,16 +59,13 @@ def _fetch_coco128(names: list[str], target: Path) -> int:
     return sum((target / n).exists() for n in names)
 
 
-def _copy_package_assets(names: list[str], target: Path) -> int:
-    try:
-        import ultralytics
-    except ImportError:
-        print("  ultralytics not installed; skipping bus.jpg and zidane.jpg", file=sys.stderr)
-        return 0
-    assets = Path(ultralytics.__file__).parent / "assets"
+def _fetch_package_assets(names: list[str], target: Path) -> int:
     for name in names:
-        if (assets / name).exists():
-            shutil.copy2(assets / name, target / name)
+        if not (target / name).exists():
+            try:
+                (target / name).write_bytes(_download(PACKAGE_ASSETS_URL.format(name=name)))
+            except OSError as e:
+                print(f"  failed: {name} ({e})", file=sys.stderr)
     return sum((target / n).exists() for n in names)
 
 
@@ -86,7 +84,7 @@ def main(argv: list[str]) -> int:
 
     found = _fetch_open_images(open_images, target)
     found += _fetch_coco128(coco, target)
-    found += _copy_package_assets(package, target)
+    found += _fetch_package_assets(package, target)
     shutil.copy2(LABELS, target / LABELS.name)
     print(f"{found}/{len(names)} photos in {target}")
     return 0 if found == len(names) else 1

@@ -14,7 +14,7 @@ Automatically crops landscape photos to vertical formats (4:5, 9:16, etc.) by de
 ## Features Implemented
 
 ### Core Processing
-- [x] YOLO-based person detection (yolov8m)
+- [x] RF-DETR person detection (medium)
 - [x] Face detection fallback when no person found
 - [x] Smart crop calculation centered on detected subject
 - [x] Configurable padding around subject
@@ -69,7 +69,7 @@ lightroom-subject-crop/
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                 # CLI entry point
-│   ├── detector.py             # YOLO + face detection
+│   ├── detector.py             # RF-DETR + face detection
 │   ├── crop_calculator.py      # Crop math
 │   ├── xmp_handler.py          # XMP file read/write
 │   ├── presets.py              # Shoot types, destinations, strategies
@@ -100,7 +100,7 @@ lightroom-subject-crop/
 ## Dependencies
 
 ```
-ultralytics>=8.0.0          # YOLO detection
+rfdetr>=1.12             # RF-DETR detection (Apache-2.0)
 opencv-python>=4.8.0        # Image processing
 Pillow>=10.0.0              # Image manipulation
 lxml>=4.9.0                 # XMP parsing
@@ -146,7 +146,7 @@ pytest tests/ -v
 ### Packaging Options
 - PyInstaller for Windows/Mac executables
 - Consider Inno Setup (Windows installer) or create-dmg (Mac)
-- YOLO model (~50MB) will be bundled
+- RF-DETR weights (~135MB each, fast and precise) are bundled
 
 ### Nice-to-Have Features
 - [ ] Watch folder mode (auto-process new files)
@@ -166,7 +166,7 @@ pytest tests/ -v
 ## Known Limitations
 
 1. **Catalog import requires local files** - Cloud-synced or moved files won't resolve
-2. **YOLO model download** - First run downloads ~50MB model
+2. **RF-DETR model download** - A source checkout downloads ~400MB of weights on first run
 3. **Memory usage** - Processing many large RAW files can use significant RAM
 4. **Capture One schema varies** - Different C1 versions have different database schemas
 

@@ -26,10 +26,13 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Download YOLO models
+      - name: Download RF-DETR weights
+        env:
+          RF_HOME: ${{ github.workspace }}
         run: |
-          python -c "from ultralytics import YOLO; YOLO('yolov8m.pt'); YOLO('yolov8m-seg.pt')"
-          dir *.pt
+          python -c "from rfdetr import RFDETRMedium, RFDETRSegMedium; RFDETRMedium(); RFDETRSegMedium()"
+          python slim_weights.py rf-detr-medium.pth rf-detr-seg-medium.pt
+          dir rf-detr-*
 
       - name: Run tests
         run: pytest tests/ -v
@@ -100,10 +103,13 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Download YOLO models
+      - name: Download RF-DETR weights
+        env:
+          RF_HOME: ${{ github.workspace }}
         run: |
-          python -c "from ultralytics import YOLO; YOLO('yolov8m.pt'); YOLO('yolov8m-seg.pt')"
-          ls -l *.pt
+          python -c "from rfdetr import RFDETRMedium, RFDETRSegMedium; RFDETRMedium(); RFDETRSegMedium()"
+          python slim_weights.py rf-detr-medium.pth rf-detr-seg-medium.pt
+          ls -l rf-detr-*
 
       - name: Run tests
         run: pytest tests/ -v

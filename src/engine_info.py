@@ -9,7 +9,7 @@ from src import __version__, resource_path
 
 
 BUILD_INFO_PATH = "config/build_info.json"
-REPORTED_PACKAGES = ("ultralytics", "torch", "opencv-python", "numpy")
+REPORTED_PACKAGES = ("rfdetr", "torch", "opencv-python", "numpy")
 
 
 def build_info() -> dict:

@@ -18,7 +18,7 @@ python app.py
 # Run CLI
 python -m src.main process <path> --aspect-ratio 4:5 --padding 0.15
 
-# Run tests (295 tests)
+# Run tests (305 tests)
 pytest tests/ -v
 
 # Run single test file
@@ -50,13 +50,14 @@ python -m src.subject_training evaluate /tmp/sports-eval --cross-validate
 lightroom-subject-crop/
 ├── app.py                          # GUI entry point
 ├── engine.py                       # Headless engine entry for the LrC plugin
+├── slim_weights.py                 # Strips optimiser state from RF-DETR weights before bundling
 ├── requirements.txt                # Dependencies
 ├── config/default_config.yaml      # Default settings
 ├── config/subject_weights.json     # Trained Smart Select weights (optional; code defaults otherwise)
 │
 ├── src/
 │   ├── main.py                     # CLI entry (typer)
-│   ├── detector.py                 # YOLOv8m-seg + face detection
+│   ├── detector.py                 # RF-DETR (Apache-2.0) + face detection
 │   ├── crop_calculator.py          # Crop math & subject selection
 │   ├── subject_scoring.py          # Sports-aware Smart Select features + weights
 │   ├── subject_modes.py            # Single / duel / group decision
@@ -95,7 +96,7 @@ lightroom-subject-crop/
 │       ├── FramePilotCheckSetup.lua # Check Setup: engine path/version + bundled test photo
 │       ├── FramePilotEngine.lua    # Engine lookup/execution, per-run log folders
 │       ├── FramePilotCore.lua      # Pure helpers (JSON, results, commands, log pruning)
-│       ├── check-photo.jpg         # Test photo for Check Setup (ultralytics bus.jpg, 640px)
+│       ├── check-photo.jpg         # Test photo for Check Setup (stock bus photo with four people, 640px)
 │       └── PluginInfoProvider.lua  # Plug-in Manager engine settings, Check Setup, Show Logs
 │
 └── tests/
@@ -151,7 +152,7 @@ lightroom-subject-crop/
 - **Classes**: PascalCase (`SubjectDetector`, `CropRegion`)
 - **Functions/methods**: snake_case (`calculate_vertical_crop`)
 - **Constants**: UPPER_SNAKE_CASE (`SUPPORTED_EXTENSIONS`, `PERSON_CLASS_ID`)
-- **Private members**: single underscore prefix (`self._yolo_model`)
+- **Private members**: single underscore prefix (`self._detr_model`)
 
 ### Data Structures
 - **Prefer `@dataclass`** for data containers (`Detection`, `CropRegion`, `ProcessingResult`)
@@ -219,7 +220,7 @@ lightroom-subject-crop/
 
 | Package | Purpose |
 |---------|---------|
-| ultralytics | YOLOv8 segmentation (yolov8m-seg.pt) |
+| rfdetr | RF-DETR detection and segmentation (Apache-2.0 sizes only; never `rfdetr[plus]`) |
 | opencv-python | Image processing, face detection fallback |
 | Pillow | Image manipulation, JPEG export |
 | lxml | XMP parsing and generation |
@@ -233,7 +234,7 @@ lightroom-subject-crop/
 ## Current State (V2)
 
 - **V2 Feature complete** - All planned features implemented
-- **295 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
+- **305 tests passing** - Crop logic, subject scoring/modes/training, candidate crops, LrC engine and plugin Lua covered
 - **Sports regression set**: `eval/` (see `docs/research/phase1-results.md` for current numbers)
 - **Pending**: Branding decisions, app name, packaging
 - See `PROJECT_STATUS.md` for detailed feature list
@@ -242,16 +243,17 @@ lightroom-subject-crop/
 
 | Feature | Description |
 |---------|-------------|
-| **Segmentation Detection** | Uses YOLOv8m-seg for tighter bounding boxes derived from pixel-accurate masks |
+| **Segmentation Detection** | Precise mode uses RF-DETR Seg Medium for tighter bounding boxes derived from masks |
 | **Batch Preview Grid** | Scrollable thumbnail grid showing cropped previews for quick review |
 | **Zoom Controls** | Mouse wheel zoom, +/- buttons, Fit/100% buttons, middle-mouse pan |
 | **Detection Dataclass** | Now includes `mask` (segmentation) and `original_bbox` fields |
 
 ### Detection Model
 
-- **Model**: `yolov8m-seg.pt` (segmentation variant, ~50MB)
+- **Models**: RF-DETR Medium (fast) and Seg Medium (precise), chosen in `DETR_MODELS` in `src/detector.py`. Only Apache-2.0 sizes may be listed (Nano, Small, Medium, Large, Seg Nano to Large); Atto, Femto, Pico, XL and 2XL are PML 1.0.
+- **Weights**: `slim_weights.py` strips the optimiser state (405 MB to 135 MB) and the build bundles the `-slim` files; a source checkout falls back to rfdetr's own download. See `docs/research/detector-swap-2026-11.md`
 - **Tight Bbox**: Derived from segmentation mask pixels via `bbox_from_mask()`
-- **Fallback**: Original YOLO bbox if mask processing fails
+- **Fallback**: Original detector bbox if mask processing fails
 - **Face Detection**: OpenCV Haar cascade as backup when no persons detected
 
 ---
