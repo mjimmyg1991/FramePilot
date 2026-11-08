@@ -220,6 +220,9 @@ DEFAULT_PRECISE_DETR_MODEL = "seg-medium"
 # not swept and keep 0.5.
 DEFAULT_PERSON_THRESHOLD = 0.75
 SEG_PERSON_THRESHOLD = 0.5
+# When nobody reaches the threshold, keep the single most confident person above
+# this, so a lone distant player still gets a crop instead of "no subject".
+FALLBACK_PERSON_THRESHOLD = 0.5
 
 
 def default_detr_model(precise: bool) -> str:
@@ -378,7 +381,7 @@ class SubjectDetector:
                     ))
                 continue
 
-            if label != self.PERSON_LABEL or conf < self.confidence_threshold:
+            if label != self.PERSON_LABEL or conf < min(self.confidence_threshold, FALLBACK_PERSON_THRESHOLD):
                 continue
 
             # Try to derive tight bbox from segmentation mask
@@ -407,7 +410,10 @@ class SubjectDetector:
                 original_bbox=original_bbox
             ))
 
-        return detections, balls
+        confident = [d for d in detections if d.confidence >= self.confidence_threshold]
+        if not confident and detections:
+            confident = [max(detections, key=lambda d: d.confidence)]
+        return confident, balls
 
     def _detect_faces(
         self,

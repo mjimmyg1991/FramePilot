@@ -64,6 +64,17 @@ class TestPersonThreshold:
         assert len(people) == 1 and len(balls) == 1
         assert model.threshold == 0.25
 
+    def test_falls_back_to_the_best_person_above_half_when_nobody_reaches_threshold(self):
+        boxes = [[10, 10, 30, 90], [50, 10, 70, 90], [80, 10, 95, 90]]
+        detector, _ = detector_with(scene(boxes, [0.6, 0.72, 0.4], ["person", "person", "person"]))
+        people, _ = detector._detect_detr(np.zeros((100, 100, 3), dtype=np.uint8), 100, 100)
+        assert [p.confidence for p in people] == [pytest.approx(0.72)]
+
+    def test_no_fallback_below_half(self):
+        detector, _ = detector_with(scene([[10, 10, 30, 90]], [0.45], ["person"]))
+        people, _ = detector._detect_detr(np.zeros((100, 100, 3), dtype=np.uint8), 100, 100)
+        assert people == []
+
 
 class TestDetectDetr:
     def test_people_and_balls_split_by_class_name_and_confidence(self):
