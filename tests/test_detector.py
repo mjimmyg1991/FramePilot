@@ -51,6 +51,20 @@ class TestModelCatalogue:
             SubjectDetector(detr_model="xlarge")
 
 
+class TestPersonThreshold:
+    def test_box_models_default_to_tuned_threshold_and_seg_keeps_half(self):
+        assert SubjectDetector().confidence_threshold == 0.75
+        assert SubjectDetector(detr_model="seg-medium").confidence_threshold == 0.5
+        assert SubjectDetector(confidence_threshold=0.3).confidence_threshold == 0.3
+
+    def test_default_threshold_drops_weak_people_but_keeps_balls(self):
+        boxes = [[10, 10, 30, 90], [50, 10, 70, 90], [80, 60, 85, 65]]
+        detector, model = detector_with(scene(boxes, [0.9, 0.6, 0.3], ["person", "person", "sports ball"]))
+        people, balls = detector._detect_detr(np.zeros((100, 100, 3), dtype=np.uint8), 100, 100)
+        assert len(people) == 1 and len(balls) == 1
+        assert model.threshold == 0.25
+
+
 class TestDetectDetr:
     def test_people_and_balls_split_by_class_name_and_confidence(self):
         found = scene(

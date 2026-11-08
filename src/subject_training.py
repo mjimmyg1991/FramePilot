@@ -119,10 +119,17 @@ def build_examples(
     folder: Path,
     labels: dict[str, dict],
     detector: SubjectDetector,
+    only: set[str] | None = None,
 ) -> tuple[list[TrainingExample], list[str]]:
     """Detect people in labelled photos and pair them with their labels.
 
     Photos with one person are left out since there is nothing to choose.
+
+    With ``only`` (a fixed photo set, so detectors and thresholds are scored on
+    the same denominator) just those photos are used and none is dropped for
+    having a single person or an unmatched label. They stay as examples, with
+    label_index -1 when the label matched nothing, so they count as misses.
+    Only photos with no person at all are returned in the second list.
 
     Returns:
         Tuple of (examples, names of photos whose label matched no detection)
@@ -131,13 +138,18 @@ def build_examples(
     for name, label in sorted(labels.items()):
         if "bbox" not in label or not (folder / name).exists():
             continue
+        if only is not None and name not in only:
+            continue
         scene = detector.detect_scene(folder / name)
-        if len(scene.people) < 2:
+        if len(scene.people) < (1 if only is not None else 2):
+            if only is not None:
+                unmatched.append(name)
             continue
         index = match_label(scene.people, tuple(label["bbox"]))
-        if index is None:
+        if index is None and only is None:
             unmatched.append(name)
             continue
+        index = -1 if index is None else index
         members = [match_label(scene.people, tuple(box)) for box in label.get("members", [])]
         examples.append(TrainingExample(
             name=name,
@@ -198,6 +210,7 @@ def fit_weights(
     Returns:
         Fitted SubjectWeights
     """
+    examples = [ex for ex in examples if ex.label_index >= 0]
     if not examples:
         return initial
     prior = initial.as_vector()
@@ -471,15 +484,24 @@ def evaluate(
     report: Annotated[Optional[Path], typer.Option(help="Folder for annotated images of misses")] = None,
     precise: Annotated[bool, typer.Option(help="Use the segmentation model")] = False,
     model: Annotated[Optional[str], typer.Option(help="RF-DETR size to test, e.g. small, large, seg-large")] = None,
+    threshold: Annotated[Optional[float], typer.Option(help="Person confidence threshold (default per model)")] = None,
+    photos: Annotated[Optional[Path], typer.Option(
+        help="Text file of photo names to score, one per line. Fixes the denominator so "
+             "detectors and thresholds compare: photos with one person or an unmatched label count as misses")] = None,
     cross_validated: Annotated[bool, typer.Option(
         "--cross-validate", help="Also report held-out accuracy of training on the other folds")] = False,
     l2: Annotated[float, typer.Option(help="Pull towards the current weights when cross-validating")] = 0.05,
 ) -> None:
     """Report how often Smart Select picks the labelled subject."""
     weights = load_subject_weights(weights_file)
-    detector = SubjectDetector(detr_model=model or default_detr_model(precise), use_tight_bbox=precise)
-    examples, unmatched = build_examples(folder, load_labels(folder), detector)
+    detector = SubjectDetector(
+        detr_model=model or default_detr_model(precise), confidence_threshold=threshold, use_tight_bbox=precise)
+    only = set(photos.read_text(encoding="utf-8").split()) if photos else None
+    examples, unmatched = build_examples(folder, load_labels(folder), detector, only)
     _print_dataset_summary(examples, unmatched)
+    if only is not None:
+        typer.echo(f"Fixed set: {len(only)} photo(s); percentages below are of the {len(examples)} with a person, "
+                   f"{len(unmatched)} with none count as misses")
     typer.echo("Current weights:")
     _print_summary(summarize(examples, weights))
     _print_mode_report(mode_report(examples, weights))

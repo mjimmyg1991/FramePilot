@@ -5,8 +5,9 @@ Date: 8 November 2026. Branch: `claude/rf-detr-detector`.
 ## Summary
 
 - Ultralytics YOLOv8 is AGPL-3.0, which blocks a closed paid app. The detector is now RF-DETR (Apache-2.0). The decision to use RF-DETR was made before this work; this note measures whether accuracy holds.
-- Chosen: RF-DETR Medium for fast mode and RF-DETR Seg Medium for precise mode, both Apache-2.0.
-- Accuracy on the 160-photo sports regression set is close to YOLOv8 but not identical. With the current Smart Select weights, exact-subject accuracy is 72.5% against 77.5% (fast) and 74.5% against 74.5% (precise). Held-out accuracy after re-fitting the weights to each detector is 73.8% against 76.9% (fast) and 79.1% against 78.3% (precise). One photo is 0.6 points, so most of these gaps are inside the noise.
+- Chosen: RF-DETR Medium for fast mode and RF-DETR Seg Medium for precise mode, both Apache-2.0. After the 8 November threshold tuning, fast mode drops people below 0.75 confidence (it was 0.5) and ships Smart Select weights re-fitted to RF-DETR output.
+- Accuracy on the 160-photo sports regression set is close to YOLOv8 but not identical. With the current Smart Select weights, exact-subject accuracy is 72.5% against 77.5% (fast) and 74.5% against 74.5% (precise). Held-out accuracy after re-fitting the weights to each detector is 73.8% against 76.9% (fast) and 79.1% against 78.3% (precise). One photo is 0.6 points, so most of these gaps are inside the noise. Those figures are at the first-pass 0.5 threshold; see "Threshold tuning" for the final ones.
+- Threshold tuning recovered part of the gap. On a fixed 160-photo set, Medium at 0.75 with the re-fitted weights gets exact subject 119/160 (YOLOv8m 124), mode correct 111/160 (YOLOv8m 116, Medium at 0.5 had 106) and best-crop intruders at 4:5 and 9:16 of 9 and 14, the same as YOLOv8m. Intruders are fully back; duel and group framing is about half recovered.
 - Speed on this Mac (Apple silicon, PyTorch picks MPS automatically): 35 ms per photo against 108 ms for YOLOv8m. On CPU only, RF-DETR Medium takes 306 ms against 93 ms for YOLOv8m, which matters for Windows machines without a GPU.
 - Masks are not needed for accuracy. Box-only detection does as well or better on the crop-quality measures, so precise mode could be retired later (see Masks below).
 
@@ -17,7 +18,7 @@ Date: 8 November 2026. Branch: `claude/rf-detr-detector`.
 - RF-DETR: `rfdetr` 1.12.0 on Python 3.13 and torch 2.15, in a venv inside the worktree. Same photos, same labels, same Smart Select weights, same candidate-crop code.
 - Metrics come from `python -m src.subject_training evaluate <dir> --cross-validate` (new `--precise` and `--model` options select the detector; precise mode uses `--precise`). Timing is `detect_scene` per photo after one warm-up call, measured over all 218 photos.
 - The held-out rows retrain the Smart Select weights on the other folds (the evaluator's `--cross-validate`). They approximate what running `train` on each detector's output would give, because the shipped weights were fitted to YOLO's confidence and size distributions.
-- Person confidence threshold stays at 0.5 and balls at 0.25, as before.
+- The results tables below use the first-pass person threshold of 0.5 and balls at 0.25. The threshold was tuned afterwards (see "Threshold tuning"); balls stay at 0.25.
 - Raw outputs were saved to the scratch folder: one text file per run from `evaluate` and one JSON per run with every detection.
 
 ## Licences
@@ -91,6 +92,69 @@ At 9:16 the picture is the same: head cut 38 to 10 (YOLO) against 39 to 8 (Mediu
 
 Precise-mode crop problems at 4:5 (single to best candidate): intruder 39 to 22 (YOLO seg), 38 to 21 (Seg Medium), 31 to 12 (Seg Medium boxes only); extremity 43 to 15, 38 to 12, 38 to 11; head cut 14 to 3, 13 to 2, 12 to 2.
 
+## Threshold tuning (8 Nov)
+
+Medium and Nano found about 9% more people than YOLOv8m at 0.5 (small background figures), which lowered mode correct and raised intruders. The first pass tried 0.6 and 0.7 but could not compare them, because fewer photos had two or more people at a higher threshold. This pass fixes that.
+
+Method:
+
+- Fixed denominator. Every configuration is scored on the same 160 photos: the ones YOLOv8m scored (two or more people at 0.5 and a matching label), listed by name in a text file and passed to `python -m src.subject_training evaluate <dir> --photos <file> --model medium --threshold 0.75`. A photo where a configuration finds only one person still counts, scored honestly (subject right only if that person is the label; mode right only if the label is single). A photo whose label matches no detection counts as a miss. A photo with no person at all would count as a miss too (none occurred at any threshold). Every figure below is out of 160.
+- Detect once, filter after. Each size was run once at 0.5 and the saved detections were filtered at each higher threshold, with the face fallback re-applied if everything was filtered out. At 0.5 this reproduces the earlier Medium row exactly (116 exact, 106 mode, 13 intruders). Nano's 0.5 row differs slightly from the table above (120 exact, 106 mode, against 122 and 108) because that table scored Nano on its own 160 photos, not YOLO's.
+- Sizes: Nano and Medium (fast mode, boxes). Thresholds 0.5 to 0.8 in steps of 0.05 up to 0.8 (0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8). Balls stay at 0.25.
+- Shipped weights are the YOLO-tuned defaults. Held-out columns re-fit the weights on the other four of five folds, including the mode and crop figures. Intruders are the best candidate crop at 4:5, or at 9:16 where stated.
+
+Sweep, shipped (hand-set) weights unless marked held-out:
+
+| Config | People found (218 photos) | Exact | Held-out exact | Mode correct | Held-out mode | Labelled members framed | Intruder 4:5 | Intruder 9:16 | Head cut 4:5 |
+|---|---|---|---|---|---|---|---|---|---|
+| YOLOv8m, 0.5 | 975 | 124 | 123 | 116 | not measured | 109/133 | 9 | 14 | 3 |
+| Nano, 0.5 | 1024 | 120 | 123 | 106 | 111 | 98/125 | 15 | 19 | 2 |
+| Nano, 0.55 | 949 | 118 | 121 | 106 | 111 | 98/123 | 14 | 18 | 2 |
+| Nano, 0.6 | 887 | 118 | 121 | 106 | 111 | 98/123 | 13 | 17 | 2 |
+| Nano, 0.65 | 821 | 118 | 121 | 107 | 113 | 98/122 | 14 | 18 | 2 |
+| Nano, 0.7 | 761 | 119 | 122 | 106 | 112 | 97/120 | 12 | 17 | 2 |
+| Nano, 0.75 | 694 | 120 | 123 | 104 | 109 | 95/115 | 10 | 13 | 2 |
+| Nano, 0.8 | 618 | 118 | 122 | 106 | 110 | 93/113 | 9 | 12 | 2 |
+| Medium, 0.5 | 1064 | 116 | 118 | 106 | 109 | 102/129 | 13 | 18 | 2 |
+| Medium, 0.55 | 996 | 116 | 118 | 108 | 111 | 103/126 | 12 | 15 | 2 |
+| Medium, 0.6 | 932 | 118 | 120 | 110 | 112 | 103/123 | 12 | 15 | 2 |
+| Medium, 0.65 | 877 | 116 | 118 | 111 | 111 | 102/121 | 11 | 15 | 2 |
+| Medium, 0.7 | 805 | 116 | 119 | 109 | 110 | 100/116 | 11 | 11 | 2 |
+| **Medium, 0.75** | 757 | 116 | 119 | 109 | 110 | 99/115 | 9 | 10 | 2 |
+| Medium, 0.8 | 681 | 116 | 119 | 108 | 109 | 97/112 | 7 | 11 | 2 |
+
+With re-fitted (held-out) weights the intruder counts at 4:5 and 9:16 are: Medium 0.5 14 and 21, 0.65 13 and 19, 0.75 9 and 14, 0.8 8 and 15; Nano 0.5 14 and 20, 0.75 10 and 15, 0.8 9 and 14. YOLOv8m's are 9 and 14 with its own shipped weights. For Medium 0.75, subject or member is 142 with shipped weights and 144 held-out, against YOLOv8m's 150 and 149.
+
+What the sweep shows:
+
+- Intruders fall steadily as the threshold rises, because the small background figures are the ones dropped. Medium reaches YOLO's level of 9 (4:5) at 0.75 and 7 at 0.8. Nano gets there only at 0.8.
+- Exact subject does not move with the threshold (Medium sits at 116 to 118 throughout). The eight regressions in "Regressions by photo" are not caused by the extra background people.
+- Mode correct improves only a little: Medium peaks at 110 to 111 (0.6 to 0.65) and settles at 109 from 0.7. Nano never gets past 107. Neither reaches YOLO's 116 with the hand-set weights. The duel and group decision (`subject_modes.py`) is tuned to YOLO's detections, and I tried its one loose constant (`MIN_RELATIVE_IMPORTANCE`, 0.25 to 0.6): it does not help (111 at 0.25, 110 at 0.3, 106 or lower above that).
+- The cost of a high threshold is labelled people dropped. Of the 170 labelled subjects, Medium finds 169 at 0.5, 167 at 0.6, 163 at 0.65, 160 at 0.75 and 160 at 0.8 (YOLOv8m 170). Labelled members framed fall from 102 to 99 between 0.5 and 0.75. Beyond 0.75 the intruder gain is small and the member loss continues, so the sweep stops at 0.8.
+- Nano is no better than Medium on the measure that matters. At 0.75 it has 120 exact against 116, but mode correct is 104 against 109 and its held-out mode is 109 against 110. At no threshold does Nano combine a mode score near 110 with intruders near 9.
+
+### Choice
+
+RF-DETR Medium at a person threshold of 0.75, with re-fitted weights. Only Medium at 0.75 or above has both mode correct around 110 and intruders at YOLO's level, so Nano's speed advantage (about 1.7 times YOLO on CPU against 3 times for Medium) is not traded for here. 0.65 has one more mode-correct photo (111) but two more intruders at 4:5 (11) and four more at 9:16 (15), and with re-fitted weights its intruders are 13 and 19, so 0.75 is better on crop quality for the same mode score. Segmentation (precise) sizes were not swept and keep 0.5.
+
+### Re-fitted weights
+
+`python -m src.subject_training train` on the RF-DETR Medium output at 0.75 (143 photos with two or more people and a matched label) scored 91% with the code-default weights and 92% held out after re-fitting, so its own guard allowed the save. `config/subject_weights.json` now ships the fitted weights (size 1.60 to 2.23, sharpness 0.70 to 1.03, centrality 0.40 to 0.88, elevation 0.00 to -0.30, the rest within 0.15). The baseline on the training set is not the same as the 160-photo set, so use these figures instead:
+
+| Fixed 160 photos, Medium | Exact | Subject or member | Mode correct | Members framed | Intruder 4:5 | Intruder 9:16 |
+|---|---|---|---|---|---|---|
+| 0.5, hand-set weights (first pass) | 116 | 144 | 106 | 102/129 | 13 | 18 |
+| 0.75, hand-set weights | 116 | 142 | 109 | 99/115 | 9 | 10 |
+| 0.75, re-fitted weights, held-out | 119 | 144 | 110 | 90/115 | 9 | 14 |
+| 0.75, re-fitted weights as shipped (trained on these photos) | 119 | 144 | 111 | 91/115 | 9 | 14 |
+| YOLOv8m, 0.5, hand-set weights | 124 | 150 | 116 | 109/133 | 9 | 14 |
+
+The shipped row is partly in-sample because 143 of the 160 photos were used to fit the weights. The held-out row is the honest estimate of how well the same weights do on new photos. Compared with hand-set weights at the same threshold, the held-out re-fit gains three exact photos (119 against 116) and one mode photo (110 against 109), loses some labelled members (90 against 99) and has more 9:16 intruders (14 against 10). It is a modest gain at best, which is why the club-football check in the follow-ups matters.
+
+### Did duel and group framing recover?
+
+Partly. Mode correct went from 106 to 111 of 160 (66.2% to 69.4%; 110 held out) against YOLOv8m's 116 (72.5%), so the gap closed from ten photos to five. One photo is 0.6 points, so the remaining five-photo gap is about 3 points and is inside what a different annotator or set could move. Labelled members framed is 91/115 (79%) against 109/133 (82%) for YOLO, with 94% of framed people being labelled members (91 of 97, YOLO 109 of 114). Intruders recovered fully (9 and 14, the same as YOLOv8m). Exact subject went from 116 to 119 against 124. Nothing in the sweep or the re-fit closes the last five mode photos; that would need a re-tune of the duel and group rules on labels made from RF-DETR boxes.
+
 ## Timing
 
 Measured on the same Mac, `detect_scene` per photo (including the sharpness and kit colour work), 218 photos:
@@ -126,7 +190,7 @@ If Precise mode stays, Seg Large is the better pick on this set (exact 117/153, 
 
 ## Choice
 
-RF-DETR Medium (fast) and Seg Medium (precise).
+RF-DETR Medium (fast, person threshold 0.75, re-fitted weights) and Seg Medium (precise, threshold 0.5).
 
 - Accuracy across the four Apache detection sizes is indistinguishable on 160 photos; the spread between sizes (73 to 77%) is as large as the gap to YOLO.
 - Speed on MPS is the same for Nano, Small and Medium (30 to 35 ms) and only Large is slower (43 ms), so there is no speed reason to go smaller on a Mac.
@@ -142,14 +206,14 @@ Why:
 - RF-DETR and YOLO agree on the people they both find: 910 of 975 YOLO person boxes have an RF-DETR box at IoU 0.5 or better, and the median best IoU is 0.96.
 - RF-DETR finds more people, 1064 against 975 at the same 0.5 threshold, because it picks up small background figures that YOLO drops. 156 RF-DETR boxes match no YOLO box. In 58 photos RF-DETR finds more people than YOLO; in 26 it finds fewer.
 - A photo such as `000000000149` has 1 person for YOLO and 4 for RF-DETR, so the same Smart Select weights now see more rivals. Weights fitted to YOLO's score and size distributions do not transfer perfectly. The held-out rows show the gap closing when the weights are re-fitted (73.8% against 76.9% in fast mode, and ahead of YOLO in precise mode), which is why re-running `python -m src.subject_training train` on the RF-DETR output is the first follow-up.
-- Raising the person threshold does not clearly help (Medium: 0.6 gives 74.8% exact on 155 photos, 0.7 gives 75.0% on 144 photos) because it also drops photos and labels from the scored set, so the denominators are not comparable. 0.5 stays so the comparison with YOLO is like for like.
+- Raising the person threshold looked unhelpful in the first pass (Medium: 0.6 gave 74.8% exact on 155 photos, 0.7 gave 75.0% on 144 photos) only because the scored set shrank with it. On a fixed 160-photo denominator it removes the intruder problem and part of the mode gap; see "Threshold tuning". It does not change which labelled subject is picked.
 - Precise mode: `000000000201` (a distant figure about 2% of the frame wide) gives `no_subject` in the packaged engine. YOLOv8m-seg also returns nothing on that photo, so it is not a regression, but fast mode finds the person.
 
 ## Caveats
 
 - The labels were made by one annotator against YOLOv8m boxes (`docs/research/phase1-results.md`), so the label matching leans towards YOLO. The 160-photo set is sports photos from Open Images and coco128, not our own clubs.
 - Ball detection is similar (155 to 187 balls against 164 for YOLO) and ball-cut problems are about the same after candidate ranking (0 to 2 photos).
-- The Smart Select weights in `config/subject_weights.json` were not re-trained in this change.
+- The first-pass tables use the YOLO-tuned Smart Select weights. A re-fitted `config/subject_weights.json` ships from the threshold tuning; it was fitted on the same sports set it is scored on, so its held-out row is the number to trust, and a club-football set should confirm both.
 
 ## Weights and bundle size
 
@@ -161,7 +225,7 @@ Why:
 
 ## Follow-ups
 
-1. Re-fit the Smart Select weights on RF-DETR output (`python -m src.subject_training train <dir>`) and compare on a club-football set.
+1. Check the re-fitted weights and the 0.75 threshold on a club-football set (done on the sports set only). Re-tune the duel and group rules in `subject_modes.py` on labels made from RF-DETR boxes, since five mode photos remain against YOLO. Sweep the threshold for the Seg sizes, which stay at 0.5.
 2. Decide on retiring Precise mode and its second weights file.
 3. Decide on the OpenCV FFmpeg licence exposure noted above (pre-existing).
-4. Check Windows CPU timing once CI produces a Windows build; fall back to Small or Nano if it is too slow.
+4. Check Windows CPU timing once CI produces a Windows build. Nano is the fallback if it is too slow, but at any threshold it gave worse mode correct than Medium, so expect to lose about five mode photos.

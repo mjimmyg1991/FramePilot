@@ -1,0 +1,22 @@
+{
+  "weights": {
+    "size": 2.225587761443903,
+    "sharpness": 1.0253990103462791,
+    "confidence": 1.064397578142982,
+    "centrality": 0.8764689851697239,
+    "side_cut": -2.369981398694279,
+    "top_cut": -0.9947098968711119,
+    "ball_proximity": 2.0737704607207434,
+    "ball_holder": 0.6285599727000082,
+    "kit_outlier": 0.07894392344297822,
+    "tiny": 0.07369086394087727,
+    "elevation": -0.29970423264073204,
+    "crowd_density": 0.07431484172496301
+  },
+  "metadata": {
+    "photos": 143,
+    "baseline_accuracy": 0.9091,
+    "held_out_accuracy": 0.9231,
+    "l2": 0.05
+  }
+}

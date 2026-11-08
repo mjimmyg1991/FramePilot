@@ -214,6 +214,12 @@ DETR_MODELS = {
 }
 DEFAULT_DETR_MODEL = "medium"
 DEFAULT_PRECISE_DETR_MODEL = "seg-medium"
+# RF-DETR finds small background figures that YOLO dropped at 0.5, which hurts
+# duel/group framing and adds intruders; 0.75 was the best sweep result for the
+# box models (docs/research/detector-swap-2026-11.md). Segmentation sizes were
+# not swept and keep 0.5.
+DEFAULT_PERSON_THRESHOLD = 0.75
+SEG_PERSON_THRESHOLD = 0.5
 
 
 def default_detr_model(precise: bool) -> str:
@@ -232,7 +238,7 @@ class SubjectDetector:
         self,
         model_type: Literal["detr", "face"] = "detr",
         detr_model: str = DEFAULT_DETR_MODEL,
-        confidence_threshold: float = 0.5,
+        confidence_threshold: float | None = None,
         use_tight_bbox: bool = False
     ):
         """Initialize the detector.
@@ -240,13 +246,15 @@ class SubjectDetector:
         Args:
             model_type: Primary detection model to use ("detr" or "face")
             detr_model: Key of DETR_MODELS; a "seg-" size is needed for tight boxes
-            confidence_threshold: Minimum confidence for people
+            confidence_threshold: Minimum confidence for people (default depends on the model)
             use_tight_bbox: Whether to derive tight bbox from segmentation mask
         """
         if detr_model not in DETR_MODELS:
             raise ValueError(f"Unknown detection model {detr_model!r}; choose from {', '.join(DETR_MODELS)}")
         self.model_type = model_type
         self.detr_model_name = detr_model
+        if confidence_threshold is None:
+            confidence_threshold = SEG_PERSON_THRESHOLD if detr_model.startswith("seg-") else DEFAULT_PERSON_THRESHOLD
         self.confidence_threshold = confidence_threshold
         self.use_tight_bbox = use_tight_bbox
 

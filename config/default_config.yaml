@@ -3,7 +3,7 @@
 detection:
   model_type: detr  # detr or face
   detr_model: medium  # nano, small, medium, large (seg-* for precise mode)
-  confidence_threshold: 0.5
+  confidence_threshold: 0.75  # box models; seg-* sizes use 0.5
 
 crop:
   default_aspect_ratio: [4, 5]  # width:height for vertical crop

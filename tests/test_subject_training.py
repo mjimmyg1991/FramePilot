@@ -232,3 +232,27 @@ class TestBuildExamples:
         assert examples[0].member_indices == [0, 1]
         assert examples[0].features.shape == (2, len(SubjectWeights.names()))
         assert unmatched == ["wrong.jpg"]
+
+    def test_fixed_photo_set_keeps_single_and_unmatched_as_misses(self, tmp_path):
+        for name in ("pair.jpg", "solo.jpg", "wrong.jpg", "empty.jpg", "other.jpg"):
+            cv2.imwrite(str(tmp_path / name), np.zeros((40, 60, 3), dtype=np.uint8))
+        two = [person((0.1, 0.1, 0.3, 0.9)), person((0.5, 0.1, 0.7, 0.9))]
+        scenes = {"pair.jpg": two, "solo.jpg": two[:1], "wrong.jpg": two, "empty.jpg": [], "other.jpg": two}
+
+        class FakeDetector:
+            def detect_scene(self, path):
+                return SceneDetections(people=scenes[path.name], balls=[], image_size=(60, 40))
+
+        box = {"bbox": [0.1, 0.1, 0.3, 0.9]}
+        labels = {n: box for n in scenes}
+        labels["wrong.jpg"] = {"bbox": [0.85, 0.1, 0.95, 0.9]}
+        only = {"pair.jpg", "solo.jpg", "wrong.jpg", "empty.jpg"}
+
+        examples, none_found = build_examples(tmp_path, labels, FakeDetector(), only)
+
+        assert [ex.name for ex in examples] == ["pair.jpg", "solo.jpg", "wrong.jpg"]
+        assert [ex.label_index for ex in examples] == [0, 0, -1]
+        assert none_found == ["empty.jpg"]
+        assert summarize(examples, SubjectWeights())["strict"][1] == 3
+        fitted = fit_weights(examples, SubjectWeights())
+        assert np.isfinite(fitted.as_vector()).all()
